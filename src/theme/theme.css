@@ -1,0 +1,44 @@
+:root {
+  --bg-dark: #0C0D14;
+  --surface-dark: #161822;
+  --surface-card: #1E2130;
+  --surface-card-light: #282C3F;
+  --surface-card-hover: #32374e;
+
+  --primary-pink: #FF3366;
+  --primary-rose: #FF5252;
+  --primary-purple: #7928CA;
+  --neon-cyan: #00F0FF;
+  --verified-blue: #0091FF;
+  --gold-superlike: #FFB800;
+  --pass-red: #FF453A;
+  --success-green: #30D158;
+
+  --text-primary: #FFFFFF;
+  --text-secondary: #9EA4BA;
+  --text-muted: #6B7280;
+
+  --flame-gradient: linear-gradient(135deg, #FF3366 0%, #FF7A00 100%);
+  --romantic-gradient: linear-gradient(135deg, #FF3366 0%, #9B51E0 100%);
+  --superlike-gradient: linear-gradient(135deg, #00C6FF 0%, #0072FF 100%);
+  --gold-gradient: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+  --dark-overlay: linear-gradient(180deg, rgba(12, 13, 20, 0) 30%, rgba(12, 13, 20, 0.95) 100%);
+  --card-overlay: linear-gradient(180deg, rgba(0, 0, 0, 0) 40%, rgba(12, 13, 20, 0.85) 75%, #0C0D14 100%);
+
+  --glass-bg: rgba(22, 24, 34, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+
+  --font-family-display: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 22px;
+  --radius-xl: 32px;
+  --radius-full: 9999px;
+
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-spring: 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}

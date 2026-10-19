@@ -1,0 +1,259 @@
+@import './theme/theme.css';
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+  font-family: var(--font-family-sans);
+  height: 100%;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  height: 100%;
+  height: 100dvh;
+  width: 100%;
+  display: flex;
+  background-color: var(--bg-dark);
+  overflow: hidden;
+}
+
+/* App Container - Adapts to 100% of Viewport */
+.app-container {
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background-color: var(--bg-dark);
+  overflow: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Desktop Multi-Pane Layout (>= 900px) */
+.desktop-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Left Sidebar on Desktop */
+.desktop-sidebar {
+  width: 380px;
+  min-width: 320px;
+  max-width: 420px;
+  height: 100%;
+  background-color: var(--surface-dark);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  z-index: 20;
+}
+
+/* Main Workspace on Desktop */
+.desktop-main-stage {
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 30%, rgba(255, 51, 102, 0.06) 0%, transparent 65%),
+              radial-gradient(circle at 85% 75%, rgba(121, 40, 202, 0.05) 0%, transparent 60%),
+              var(--bg-dark);
+}
+
+/* Mobile Screen Container (< 900px) */
+.mobile-screen-container {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--bg-dark);
+}
+
+/* Mobile Bottom Navigation Bar with Safe Area */
+.mobile-bottom-nav {
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background-color: rgba(22, 24, 34, 0.95);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding-left: 8px;
+  padding-right: 8px;
+  z-index: 50;
+  flex-shrink: 0;
+}
+
+.mobile-bottom-nav button {
+  touch-action: manipulation;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  transition: all 0.2s ease;
+}
+
+.mobile-bottom-nav button:active {
+  transform: scale(0.92);
+}
+
+/* Responsive Breakpoints & Utilities */
+@media (max-width: 899px) {
+  .desktop-layout {
+    display: none !important;
+  }
+}
+
+@media (min-width: 900px) {
+  .mobile-screen-container {
+    display: none !important;
+  }
+}
+
+/* Common scrollbar styles */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Typography Helpers */
+h1, h2, h3, h4, .brand-font {
+  font-family: var(--font-family-display);
+}
+
+.gradient-text-flame {
+  background: var(--flame-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gradient-text-romantic {
+  background: var(--romantic-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Glass Card */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+}
+
+/* Animations */
+@keyframes pulseGlow {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 15px rgba(255, 51, 102, 0.4);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 25px rgba(255, 51, 102, 0.7);
+  }
+}
+
+@keyframes stampPop {
+  0% {
+    transform: scale(0.6) rotate(var(--stamp-deg, -15deg));
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.15) rotate(var(--stamp-deg, -15deg));
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1) rotate(var(--stamp-deg, -15deg));
+    opacity: 1;
+  }
+}
+
+@keyframes slideUpModal {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+.animate-slide-up {
+  animation: slideUpModal 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Interactive elements */
+button {
+  cursor: pointer;
+  border: none;
+  outline: none;
+  background: none;
+  font-family: inherit;
+  transition: transform var(--transition-fast), filter var(--transition-fast), opacity var(--transition-fast), background-color var(--transition-fast);
+}
+
+button:active {
+  transform: scale(0.96);
+}
+
+input, textarea, select {
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--surface-card);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--primary-pink);
+  box-shadow: 0 0 0 2px rgba(255, 51, 102, 0.2);
+}
