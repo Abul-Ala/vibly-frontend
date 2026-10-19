@@ -14,7 +14,9 @@ import {
   SwipeResult,
   UpdateProfileDto,
   UserProfile,
-  UserStoryGroup
+  UserStoryGroup,
+  VoiceMatchStatusDto,
+  VoiceSignalDto
 } from './types';
 
 export const DEFAULT_BASE_URL =
@@ -292,6 +294,38 @@ class ApiClient {
     return this.request<{ message: string }>('/safety/report', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  // --- Voice Match APIs ---
+  async joinVoiceQueue(): Promise<VoiceMatchStatusDto> {
+    return this.request<VoiceMatchStatusDto>('/voice-match/queue/join', {
+      method: 'POST',
+    });
+  }
+
+  async getVoiceQueueStatus(): Promise<VoiceMatchStatusDto> {
+    return this.request<VoiceMatchStatusDto>('/voice-match/queue/status', {
+      method: 'GET',
+    });
+  }
+
+  async leaveVoiceQueue(): Promise<void> {
+    await this.request<void>('/voice-match/queue/leave', {
+      method: 'POST',
+    });
+  }
+
+  async sendVoiceMatchRequest(roomId: string): Promise<VoiceMatchStatusDto> {
+    return this.request<VoiceMatchStatusDto>(`/voice-match/room/${roomId}/match-request`, {
+      method: 'POST',
+    });
+  }
+
+  async sendVoiceSignal(roomId: string, signal: VoiceSignalDto): Promise<void> {
+    await this.request<void>(`/voice-match/room/${roomId}/signal`, {
+      method: 'POST',
+      body: JSON.stringify(signal),
     });
   }
 }

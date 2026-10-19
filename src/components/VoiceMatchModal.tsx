@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
-import { UserProfile } from '../api/types';
+import { UserProfile, VoiceSignalDto } from '../api/types';
 import apiClient from '../api/apiClient';
 import {
   Mic,
@@ -14,9 +14,8 @@ import {
   Volume2,
   X,
   MessageCircle,
-  ArrowRight,
-  ShieldCheck,
   Flame,
+  Wifi,
 } from 'lucide-react';
 
 interface VoiceMatchModalProps {
@@ -48,6 +47,19 @@ const getProfileName = (p?: UserProfile | null): string => {
   return p.displayName || (p as unknown as { name?: string }).name || 'Partner';
 };
 
+const DEFAULT_MOCK_PEER: UserProfile = {
+  id: 9999,
+  userId: 9999,
+  displayName: 'Sophia',
+  age: 24,
+  bio: 'Lover of indie vinyl records, rooftop sunsets, and spontaneous road trips. Talk to me about your favorite travel spot!',
+  gender: 'FEMALE',
+  distanceKm: 3,
+  city: 'Downtown',
+  interests: [{ id: 1, name: 'Live Music' }, { id: 2, name: 'Travel' }, { id: 3, name: 'Coffee' }],
+  photos: [{ id: 1, photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=800', isPrimary: true, sortOrder: 0 }],
+};
+
 export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
   currentUser,
   availableProfiles = [],
@@ -57,51 +69,229 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
   showToast,
 }) => {
   const [callState, setCallState] = useState<CallState>('searching');
-  const [timeLeft, setTimeLeft] = useState(60); // 1 minute limit
+  const [timeLeft, setTimeLeft] = useState(60);
   const [isMuted, setIsMuted] = useState(false);
   const [hasSentMatchRequest, setHasSentMatchRequest] = useState(false);
   const [peerSentMatchRequest, setPeerSentMatchRequest] = useState(false);
   const [matchedPeer, setMatchedPeer] = useState<UserProfile | null>(null);
   const [icebreakerIndex, setIcebreakerIndex] = useState(0);
 
+  // Live Communication State
+  const [roomId, setRoomId] = useState<string | null>(null);
+  const [isLiveConnection, setIsLiveConnection] = useState(false);
+  const [matchedConversationId, setMatchedConversationId] = useState<number | undefined>(undefined);
+
+  // Audio & WebRTC references
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const animFrameIdRef = useRef<number | null>(null);
   const isMicAllowedRef = useRef(false);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const processedSignalsRef = useRef<Set<string>>(new Set());
 
-  // Pick a candidate to voice-match with
+  // Trigger celebration effects
+  const triggerCelebration = (peer: UserProfile) => {
+    setCallState('celebration');
+    onMutualMatch(peer);
+    try {
+      confetti({
+        particleCount: 160,
+        spread: 80,
+        origin: { y: 0.6 },
+        colors: ['#FF3366', '#FF7A00', '#9B51E0', '#00F0FF'],
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  // Step 1: Join the backend voice queue and search for another waiting user
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    if (callState === 'searching') {
-      // Find candidate from feed or mock partner
-      const candidates = availableProfiles.filter(p => p.id !== currentUser.id);
-      const chosen = candidates.length > 0
-        ? candidates[Math.floor(Math.random() * candidates.length)]
-        : ({
-            id: 9999,
-            userId: 9999,
-            displayName: 'Sophia',
-            age: 24,
-            bio: 'Lover of indie vinyl records, rooftop sunsets, and spontaneous road trips. Talk to me about your favorite travel spot!',
-            gender: 'FEMALE',
-            distanceKm: 3,
-            city: 'Downtown',
-            interests: [{ id: 1, name: 'Live Music' }, { id: 2, name: 'Travel' }, { id: 3, name: 'Coffee' }],
-            photos: [{ id: 1, photoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=800', isPrimary: true, sortOrder: 0 }],
-          } as UserProfile);
+    let isCancelled = false;
+    let pollInterval: ReturnType<typeof setInterval>;
+    let fallbackTimeout: ReturnType<typeof setTimeout>;
 
-      // Realistic pairing delay (2.5s)
-      timer = setTimeout(() => {
-        setMatchedPeer(chosen);
-        setCallState('connected');
-        setTimeLeft(60);
-        showToast(`Connected with ${getProfileName(chosen)}! You have 60 seconds.`, 'info');
-      }, 2500);
+    if (callState === 'searching') {
+      const startMatchmaking = async () => {
+        try {
+          const res = await apiClient.joinVoiceQueue();
+          if (isCancelled) return;
+
+          if (res.status === 'MATCHED' && res.peer) {
+            // Instantly paired with another live user!
+            setRoomId(res.roomId || null);
+            setMatchedPeer(res.peer);
+            setIsLiveConnection(true);
+            setCallState('connected');
+            setTimeLeft(60);
+            showToast(`Connected with ${getProfileName(res.peer)}! You have 60 seconds.`, 'info');
+            initLiveAudio(res.roomId!, res.isInitiator || false);
+            return;
+          }
+
+          // In waiting pool -> Poll status every 1.5s
+          pollInterval = setInterval(async () => {
+            if (isCancelled) return;
+            try {
+              const status = await apiClient.getVoiceQueueStatus();
+              if (status.status === 'MATCHED' && status.peer) {
+                clearInterval(pollInterval);
+                clearTimeout(fallbackTimeout);
+                setRoomId(status.roomId || null);
+                setMatchedPeer(status.peer);
+                setIsLiveConnection(true);
+                setCallState('connected');
+                setTimeLeft(60);
+                showToast(`Live Voice Connected with ${getProfileName(status.peer)}!`, 'success');
+                initLiveAudio(status.roomId!, status.isInitiator || false);
+              }
+            } catch {
+              // ignore polling error
+            }
+          }, 1500);
+
+          // If no second user connects within 15 seconds, connect with a discovery candidate so user can still test
+          fallbackTimeout = setTimeout(() => {
+            if (callState === 'searching' && !isCancelled) {
+              clearInterval(pollInterval);
+              const candidates = availableProfiles.filter(p => p.id !== currentUser.id);
+              const chosen = candidates.length > 0
+                ? candidates[Math.floor(Math.random() * candidates.length)]
+                : DEFAULT_MOCK_PEER;
+              setMatchedPeer(chosen);
+              setIsLiveConnection(false);
+              setCallState('connected');
+              setTimeLeft(60);
+              showToast(`Connected with ${getProfileName(chosen)}! You have 60 seconds.`, 'info');
+            }
+          }, 15000);
+
+        } catch (err) {
+          // If backend offline, pair with local candidate
+          fallbackTimeout = setTimeout(() => {
+            if (isCancelled) return;
+            const candidates = availableProfiles.filter(p => p.id !== currentUser.id);
+            const chosen = candidates.length > 0
+              ? candidates[Math.floor(Math.random() * candidates.length)]
+              : DEFAULT_MOCK_PEER;
+            setMatchedPeer(chosen);
+            setIsLiveConnection(false);
+            setCallState('connected');
+            setTimeLeft(60);
+            showToast(`Connected with ${getProfileName(chosen)}! You have 60 seconds.`, 'info');
+          }, 2500);
+        }
+      };
+
+      startMatchmaking();
     }
 
-    return () => clearTimeout(timer);
+    return () => {
+      isCancelled = true;
+      if (pollInterval) clearInterval(pollInterval);
+      if (fallbackTimeout) clearTimeout(fallbackTimeout);
+    };
   }, [callState, availableProfiles, currentUser.id]);
+
+  // Step 2: Initialize WebRTC Live 2-Way Audio Streaming
+  const initLiveAudio = async (activeRoomId: string, isInitiator: boolean) => {
+    try {
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+        ],
+      });
+      peerConnectionRef.current = pc;
+
+      // Capture Microphone
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      mediaStreamRef.current = stream;
+      isMicAllowedRef.current = true;
+      stream.getAudioTracks().forEach(track => pc.addTrack(track, stream));
+
+      // Handle Incoming Remote Audio Track
+      pc.ontrack = (event) => {
+        if (remoteAudioRef.current && event.streams[0]) {
+          remoteAudioRef.current.srcObject = event.streams[0];
+          remoteAudioRef.current.play().catch(() => {});
+        }
+      };
+
+      // Send local ICE candidates to backend
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          apiClient.sendVoiceSignal(activeRoomId, {
+            type: 'candidate',
+            roomId: activeRoomId,
+            payload: JSON.stringify(event.candidate),
+          }).catch(() => {});
+        }
+      };
+
+      // Caller creates WebRTC Offer
+      if (isInitiator) {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await apiClient.sendVoiceSignal(activeRoomId, {
+          type: 'offer',
+          roomId: activeRoomId,
+          payload: JSON.stringify(offer),
+        });
+      }
+    } catch (err) {
+      console.warn('Live audio initialization error:', err);
+    }
+  };
+
+  // Step 3: Polling for Live Room updates & WebRTC signaling
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (callState === 'connected' && roomId && isLiveConnection) {
+      interval = setInterval(async () => {
+        try {
+          const status = await apiClient.getVoiceQueueStatus();
+          if (status.peerSentMatchRequest && !peerSentMatchRequest) {
+            setPeerSentMatchRequest(true);
+            showToast(`${getProfileName(matchedPeer)} sent you a Match Request! ❤️`, 'info');
+          }
+
+          if (status.isMutualMatch && matchedPeer) {
+            setMatchedConversationId(status.conversationId);
+            triggerCelebration(matchedPeer);
+          }
+        } catch {
+          // ignore
+        }
+      }, 1500);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [callState, roomId, isLiveConnection, peerSentMatchRequest, matchedPeer]);
+
+  // Peer simulated match request behavior (for solo/demo mode)
+  useEffect(() => {
+    let matchTimeout: ReturnType<typeof setTimeout>;
+    if (callState === 'connected' && matchedPeer && !isLiveConnection) {
+      const randomDelay = (15 + Math.random() * 20) * 1000;
+      matchTimeout = setTimeout(() => {
+        setPeerSentMatchRequest(true);
+        showToast(`${getProfileName(matchedPeer)} sent you a Match Request! ❤️`, 'info');
+      }, randomDelay);
+    }
+    return () => clearTimeout(matchTimeout);
+  }, [callState, matchedPeer, isLiveConnection]);
+
+  // Handle mutual match in demo mode
+  useEffect(() => {
+    if (hasSentMatchRequest && peerSentMatchRequest && callState === 'connected' && matchedPeer && !isLiveConnection) {
+      triggerCelebration(matchedPeer);
+    }
+  }, [hasSentMatchRequest, peerSentMatchRequest, callState, matchedPeer, isLiveConnection]);
 
   // 60-Second Countdown Timer
   useEffect(() => {
@@ -111,7 +301,9 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
         setTimeLeft(prev => {
           if (prev <= 1) {
             clearInterval(interval);
-            handleTimeExpired();
+            if (!hasSentMatchRequest || !peerSentMatchRequest) {
+              setCallState('ended');
+            }
             return 0;
           }
           return prev - 1;
@@ -122,41 +314,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     return () => clearInterval(interval);
   }, [callState, hasSentMatchRequest, peerSentMatchRequest]);
 
-  // Peer random match request behavior (simulation)
-  useEffect(() => {
-    let matchTimeout: ReturnType<typeof setTimeout>;
-    if (callState === 'connected' && matchedPeer) {
-      // Peer sends match request around 20-35 seconds into the call
-      const randomDelay = (15 + Math.random() * 20) * 1000;
-      matchTimeout = setTimeout(() => {
-        setPeerSentMatchRequest(true);
-        showToast(`${getProfileName(matchedPeer)} sent you a Match Request! ❤️`, 'info');
-      }, randomDelay);
-    }
-    return () => clearTimeout(matchTimeout);
-  }, [callState, matchedPeer]);
-
-  // Handle Mutual Match Trigger
-  useEffect(() => {
-    if (hasSentMatchRequest && peerSentMatchRequest && callState === 'connected' && matchedPeer) {
-      setCallState('celebration');
-      onMutualMatch(matchedPeer);
-
-      // Trigger Confetti
-      try {
-        confetti({
-          particleCount: 150,
-          spread: 80,
-          origin: { y: 0.6 },
-          colors: ['#FF3366', '#FF7A00', '#9B51E0', '#00F0FF'],
-        });
-      } catch {
-        // Confetti fallback
-      }
-    }
-  }, [hasSentMatchRequest, peerSentMatchRequest, callState, matchedPeer, onMutualMatch]);
-
-  // Audio Context & Frequency Visualizer
+  // Web Audio API Frequency Spectrum Visualizer
   useEffect(() => {
     if (callState !== 'connected') return;
 
@@ -164,10 +322,13 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     let analyser: AnalyserNode;
     let dataArray: Uint8Array;
 
-    const startAudio = async () => {
+    const setupVisualizer = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        mediaStreamRef.current = stream;
+        let stream = mediaStreamRef.current;
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          mediaStreamRef.current = stream;
+        }
         isMicAllowedRef.current = true;
 
         audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
@@ -181,7 +342,6 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
         const bufferLength = analyser.frequencyBinCount;
         dataArray = new Uint8Array(bufferLength);
       } catch {
-        // Mic permission not granted - fallback to animated synth waves
         isMicAllowedRef.current = false;
       }
 
@@ -210,12 +370,11 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
       for (let i = 0; i < numBars; i++) {
         let value = 10;
         if (isMuted) {
-          value = 4; // Flatline when muted
+          value = 4;
         } else if (analyser && dataArray && isMicAllowedRef.current) {
           const index = Math.floor((i / numBars) * dataArray.length);
           value = (dataArray[index] / 255) * height * 0.85;
         } else {
-          // Lively synthetic voice simulation
           phase += 0.003;
           const sine = Math.sin(phase * 4 + i * 0.45);
           const cosine = Math.cos(phase * 3 + i * 0.3);
@@ -226,7 +385,6 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
         const x = i * (barWidth + gap);
         const y = (height - barHeight) / 2;
 
-        // Gradient color for bars
         const gradient = ctx.createLinearGradient(0, y, 0, y + barHeight);
         gradient.addColorStop(0, '#FF3366');
         gradient.addColorStop(0.5, '#9B51E0');
@@ -241,7 +399,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
       animFrameIdRef.current = requestAnimationFrame(renderWaveform);
     };
 
-    startAudio();
+    setupVisualizer();
 
     return () => {
       if (animFrameIdRef.current) cancelAnimationFrame(animFrameIdRef.current);
@@ -254,15 +412,33 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     };
   }, [callState, isMuted]);
 
-  const handleTimeExpired = () => {
-    if (!hasSentMatchRequest || !peerSentMatchRequest) {
-      setCallState('ended');
+  // Clean exit and leave backend room
+  const handleExit = () => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
     }
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+    }
+    apiClient.leaveVoiceQueue().catch(() => {});
+    onClose();
   };
 
-  const handleSendMatchRequest = () => {
+  const handleSendMatchRequest = async () => {
     setHasSentMatchRequest(true);
     showToast('Match Request Sent! Waiting for partner... ❤️', 'success');
+
+    if (roomId && isLiveConnection) {
+      try {
+        const res = await apiClient.sendVoiceMatchRequest(roomId);
+        if (res.isMutualMatch && matchedPeer) {
+          setMatchedConversationId(res.conversationId);
+          triggerCelebration(matchedPeer);
+        }
+      } catch {
+        // fallback
+      }
+    }
   };
 
   const toggleMute = () => {
@@ -281,6 +457,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     setHasSentMatchRequest(false);
     setPeerSentMatchRequest(false);
     setMatchedPeer(null);
+    setRoomId(null);
   };
 
   const formatTimer = (seconds: number) => {
@@ -289,11 +466,9 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Circular progress calculations
   const radius = 34;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (timeLeft / 60) * circumference;
-
   const timerColor = timeLeft > 20 ? 'var(--neon-cyan, #00F0FF)' : timeLeft > 10 ? '#FFB800' : '#FF3366';
 
   return (
@@ -308,6 +483,9 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
       backdropFilter: 'blur(20px)',
       padding: '16px',
     }}>
+      {/* Hidden Audio element for live peer audio playback */}
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
+
       <div style={{
         position: 'relative',
         width: '100%',
@@ -320,7 +498,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
         display: 'flex',
         flexDirection: 'column',
       }}>
-        {/* Top Bar */}
+        {/* Top Header */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -341,8 +519,26 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
               <Radio size={15} color="#fff" />
             </div>
             <div>
-              <div style={{ fontSize: '14px', fontWeight: 800, color: '#fff', letterSpacing: '0.5px' }}>
-                Voice Match
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '14px', fontWeight: 800, color: '#fff', letterSpacing: '0.5px' }}>
+                  Voice Match
+                </span>
+                {isLiveConnection && (
+                  <span style={{
+                    fontSize: '9px',
+                    fontWeight: 700,
+                    padding: '2px 6px',
+                    borderRadius: '8px',
+                    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                    color: '#10B981',
+                    border: '1px solid rgba(16, 185, 129, 0.4)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '3px',
+                  }}>
+                    <Wifi size={9} /> LIVE
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.5)' }}>
                 1-Minute Speed Audio
@@ -351,7 +547,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
+            onClick={handleExit}
             style={{
               width: '32px',
               height: '32px',
@@ -378,7 +574,6 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
             alignItems: 'center',
             textAlign: 'center',
           }}>
-            {/* Pulsing Radar Effect */}
             <div style={{
               position: 'relative',
               width: '160px',
@@ -419,14 +614,14 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
             </div>
 
             <h3 style={{ fontSize: '20px', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>
-              Finding Your Voice Match...
+              Finding Live Voice Partner...
             </h3>
-            <p style={{ fontSize: '13px', color: 'rgba(255, 255, 255, 0.6)', maxWidth: '280px', lineHeight: 1.5, marginBottom: '28px' }}>
-              Matching you with someone nearby for a 60-second blind voice conversation. Listen to the vibe!
+            <p style={{ fontSize: '13px', color: 'rgba(255, 255, 255, 0.6)', maxWidth: '290px', lineHeight: 1.5, marginBottom: '28px' }}>
+              Checking for users on Voice Match right now. You'll be connected directly into a 60-second real-time audio room!
             </p>
 
             <button
-              onClick={onClose}
+              onClick={handleExit}
               style={{
                 padding: '10px 24px',
                 borderRadius: '24px',
@@ -453,7 +648,6 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
           }}>
             {/* Timer Ring & Mystery Avatar */}
             <div style={{ position: 'relative', width: '130px', height: '130px', marginBottom: '16px' }}>
-              {/* Circular SVG Timer */}
               <svg width="130" height="130" style={{ transform: 'rotate(-90deg)', position: 'absolute', top: 0, left: 0 }}>
                 <circle
                   cx="65"
@@ -541,7 +735,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
                 {getProfileName(matchedPeer)}, {matchedPeer.age}
               </h3>
               <p style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.5)', margin: '4px 0 0 0' }}>
-                {matchedPeer.city || 'Nearby'} • Mystery Photo unlocks upon mutual match
+                {matchedPeer.city || 'Nearby'} • Photo unblurs on mutual match
               </p>
             </div>
 
@@ -566,7 +760,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
                 marginBottom: '8px',
               }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Volume2 size={12} color="#00F0FF" /> Live Voice Channel
+                  <Volume2 size={12} color="#00F0FF" /> 2-Way Live Voice Stream
                 </span>
                 <span>{isMuted ? 'Muted' : 'Speaking...'}</span>
               </div>
@@ -684,7 +878,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
 
               {/* End / Skip Call */}
               <button
-                onClick={() => setCallState('ended')}
+                onClick={handleExit}
                 title="End Call"
                 style={{
                   width: '48px',
@@ -788,14 +982,14 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
               You and {getProfileName(matchedPeer)} Matched!
             </h3>
             <p style={{ fontSize: '13px', color: 'rgba(255, 255, 255, 0.65)', lineHeight: 1.5, marginBottom: '28px', maxWidth: '320px' }}>
-              Your 60-second voice vibe was mutual! Her profile is now unlocked and you can continue chatting anytime.
+              Your 60-second voice vibe was mutual! Photos are now unblurred and you can chat anytime.
             </p>
 
             <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <button
                 onClick={() => {
-                  onClose();
-                  onNavigateToChat();
+                  handleExit();
+                  onNavigateToChat(matchedConversationId);
                 }}
                 style={{
                   width: '100%',
@@ -819,7 +1013,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
               </button>
 
               <button
-                onClick={onClose}
+                onClick={handleExit}
                 style={{
                   width: '100%',
                   padding: '12px',
@@ -893,7 +1087,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
               </button>
 
               <button
-                onClick={onClose}
+                onClick={handleExit}
                 style={{
                   width: '100%',
                   padding: '12px',

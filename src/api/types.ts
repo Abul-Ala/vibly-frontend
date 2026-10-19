@@ -160,3 +160,25 @@ export interface LikeNotificationDto {
   isMatched?: boolean;
 }
 
+export interface VoiceMatchStatusDto {
+  status: 'IDLE' | 'WAITING' | 'MATCHED' | 'ENDED';
+  roomId?: string;
+  peer?: UserProfile;
+  audioMode?: 'LIVEKIT' | 'WEBRTC_P2P';
+  livekitUrl?: string;
+  livekitToken?: string;
+  isInitiator?: boolean;
+  peerSentMatchRequest?: boolean;
+  isMutualMatch?: boolean;
+  conversationId?: number;
+  createdAt?: number;
+  durationSeconds?: number;
+}
+
+export interface VoiceSignalDto {
+  type: 'offer' | 'answer' | 'candidate' | 'bye';
+  senderId?: number;
+  targetId?: number;
+  roomId: string;
+  payload: string;
+}
