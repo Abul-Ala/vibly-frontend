@@ -72,7 +72,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     loadSidebarData();
-    const interval = setInterval(loadSidebarData, 5000);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      loadSidebarData();
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
 

@@ -99,7 +99,10 @@ export const App: React.FC = () => {
     };
 
     pollLikes();
-    const interval = setInterval(pollLikes, 5000);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      pollLikes();
+    }, 45000);
     return () => clearInterval(interval);
   }, [currentUser]);
 

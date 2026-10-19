@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
-import { UserProfile, VoiceSignalDto } from '../api/types';
+import { UserProfile, VoiceSignalDto, VoiceMatchStatusDto } from '../api/types';
 import apiClient from '../api/apiClient';
 import { Room, RoomEvent, Track, RemoteTrack } from 'livekit-client';
 import {
@@ -91,6 +91,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const livekitRoomRef = useRef<Room | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
   const processedSignalsRef = useRef<Set<string>>(new Set());
 
   // Trigger celebration effects
@@ -109,91 +110,108 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     }
   };
 
-  // Step 1: Join the backend voice queue and search for another waiting user
+  // Step 1: Subscribe to Server-Sent Events (SSE) for instant zero-polling matchmaking
   useEffect(() => {
     let isCancelled = false;
-    let pollInterval: ReturnType<typeof setInterval>;
     let fallbackTimeout: ReturnType<typeof setTimeout>;
 
     if (callState === 'searching') {
-      const startMatchmaking = async () => {
-        try {
-          const res = await apiClient.joinVoiceQueue();
-          if (isCancelled) return;
+      const sseUrl = `${apiClient.baseUrl}/voice-match/queue/events?token=${apiClient.authToken || ''}`;
 
+      try {
+        const sse = new EventSource(sseUrl);
+        sseRef.current = sse;
+
+        sse.addEventListener('MATCHED', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const status: VoiceMatchStatusDto = JSON.parse(e.data);
+            if (status.peer) {
+              if (fallbackTimeout) clearTimeout(fallbackTimeout);
+              setRoomId(status.roomId || null);
+              setMatchedPeer(status.peer);
+              setIsLiveConnection(true);
+              setCallState('connected');
+              setTimeLeft(60);
+              showToast(`Live Voice Connected with ${getProfileName(status.peer)}!`, 'success');
+              initLiveAudio(status.roomId!, status.isInitiator || false, status.livekitUrl, status.livekitToken);
+            }
+          } catch {
+            // ignore
+          }
+        });
+
+        sse.addEventListener('PEER_MATCH_REQUEST', () => {
+          if (isCancelled) return;
+          setPeerSentMatchRequest(true);
+          showToast(`Your voice partner sent you a Match Request! ❤️`, 'info');
+        });
+
+        sse.addEventListener('MUTUAL_MATCH', (e: MessageEvent) => {
+          if (isCancelled) return;
+          try {
+            const status: VoiceMatchStatusDto = JSON.parse(e.data);
+            setMatchedConversationId(status.conversationId);
+            if (matchedPeer) triggerCelebration(matchedPeer);
+          } catch {
+            // ignore
+          }
+        });
+
+        sse.onerror = () => {
+          // If SSE fails (e.g. while Railway backend is deploying), close cleanly
+          sse.close();
+          sseRef.current = null;
+        };
+
+        // Join backend matchmaking queue
+        apiClient.joinVoiceQueue().then((res) => {
+          if (isCancelled) return;
           if (res.status === 'MATCHED' && res.peer) {
-            // Instantly paired with another live user!
+            if (fallbackTimeout) clearTimeout(fallbackTimeout);
             setRoomId(res.roomId || null);
             setMatchedPeer(res.peer);
             setIsLiveConnection(true);
             setCallState('connected');
             setTimeLeft(60);
-            showToast(`Connected with ${getProfileName(res.peer)}! You have 60 seconds.`, 'info');
+            showToast(`Live Voice Connected with ${getProfileName(res.peer)}!`, 'success');
             initLiveAudio(res.roomId!, res.isInitiator || false, res.livekitUrl, res.livekitToken);
-            return;
           }
+        }).catch((err) => {
+          // Handled gracefully: if Railway is rebuilding, fallback timeout will seamlessly connect
+          console.warn('Backend join queue error:', err);
+        });
+      } catch {
+        // SSE not supported
+      }
 
-          // In waiting pool -> Poll status every 1.5s
-          pollInterval = setInterval(async () => {
-            if (isCancelled) return;
-            try {
-              const status = await apiClient.getVoiceQueueStatus();
-              if (status.status === 'MATCHED' && status.peer) {
-                clearInterval(pollInterval);
-                clearTimeout(fallbackTimeout);
-                setRoomId(status.roomId || null);
-                setMatchedPeer(status.peer);
-                setIsLiveConnection(true);
-                setCallState('connected');
-                setTimeLeft(60);
-                showToast(`Live Voice Connected with ${getProfileName(status.peer)}!`, 'success');
-                initLiveAudio(status.roomId!, status.isInitiator || false, status.livekitUrl, status.livekitToken);
-              }
-            } catch {
-              // ignore polling error
-            }
-          }, 1500);
-
-          // If no second user connects within 15 seconds, connect with a discovery candidate so user can still test
-          fallbackTimeout = setTimeout(() => {
-            if (callState === 'searching' && !isCancelled) {
-              clearInterval(pollInterval);
-              const candidates = availableProfiles.filter(p => p.id !== currentUser.id);
-              const chosen = candidates.length > 0
-                ? candidates[Math.floor(Math.random() * candidates.length)]
-                : DEFAULT_MOCK_PEER;
-              setMatchedPeer(chosen);
-              setIsLiveConnection(false);
-              setCallState('connected');
-              setTimeLeft(60);
-              showToast(`Connected with ${getProfileName(chosen)}! You have 60 seconds.`, 'info');
-            }
-          }, 15000);
-
-        } catch (err) {
-          // If backend offline, pair with local candidate
-          fallbackTimeout = setTimeout(() => {
-            if (isCancelled) return;
-            const candidates = availableProfiles.filter(p => p.id !== currentUser.id);
-            const chosen = candidates.length > 0
-              ? candidates[Math.floor(Math.random() * candidates.length)]
-              : DEFAULT_MOCK_PEER;
-            setMatchedPeer(chosen);
-            setIsLiveConnection(false);
-            setCallState('connected');
-            setTimeLeft(60);
-            showToast(`Connected with ${getProfileName(chosen)}! You have 60 seconds.`, 'info');
-          }, 2500);
+      // If no live peer connects within 10 seconds, pair with candidate so user is never stuck
+      fallbackTimeout = setTimeout(() => {
+        if (callState === 'searching' && !isCancelled) {
+          if (sseRef.current) {
+            sseRef.current.close();
+            sseRef.current = null;
+          }
+          const candidates = availableProfiles.filter(p => p.id !== currentUser.id);
+          const chosen = candidates.length > 0
+            ? candidates[Math.floor(Math.random() * candidates.length)]
+            : DEFAULT_MOCK_PEER;
+          setMatchedPeer(chosen);
+          setIsLiveConnection(false);
+          setCallState('connected');
+          setTimeLeft(60);
+          showToast(`Connected with ${getProfileName(chosen)}! You have 60 seconds.`, 'info');
         }
-      };
-
-      startMatchmaking();
+      }, 10000);
     }
 
     return () => {
       isCancelled = true;
-      if (pollInterval) clearInterval(pollInterval);
       if (fallbackTimeout) clearTimeout(fallbackTimeout);
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
     };
   }, [callState, availableProfiles, currentUser.id]);
 
@@ -280,32 +298,6 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     }
   };
 
-  // Step 3: Polling for Live Room updates & WebRTC signaling
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (callState === 'connected' && roomId && isLiveConnection) {
-      interval = setInterval(async () => {
-        try {
-          const status = await apiClient.getVoiceQueueStatus();
-          if (status.peerSentMatchRequest && !peerSentMatchRequest) {
-            setPeerSentMatchRequest(true);
-            showToast(`${getProfileName(matchedPeer)} sent you a Match Request! ❤️`, 'info');
-          }
-
-          if (status.isMutualMatch && matchedPeer) {
-            setMatchedConversationId(status.conversationId);
-            triggerCelebration(matchedPeer);
-          }
-        } catch {
-          // ignore
-        }
-      }, 1500);
-    }
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [callState, roomId, isLiveConnection, peerSentMatchRequest, matchedPeer]);
 
   // Peer simulated match request behavior (for solo/demo mode)
   useEffect(() => {
@@ -458,6 +450,10 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     if (livekitRoomRef.current) {
       livekitRoomRef.current.disconnect();
       livekitRoomRef.current = null;
+    }
+    if (sseRef.current) {
+      sseRef.current.close();
+      sseRef.current = null;
     }
     apiClient.leaveVoiceQueue().catch(() => {});
     onClose();
