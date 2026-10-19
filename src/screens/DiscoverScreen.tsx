@@ -7,7 +7,8 @@ import { ProfileDetailSheet } from '../components/ProfileDetailSheet';
 import { MatchCelebrationModal } from '../components/MatchCelebrationModal';
 import { FilterModal, DiscoveryFilters } from '../components/FilterModal';
 import { ReportBlockModal } from '../components/ReportBlockModal';
-import { SlidersHorizontal, RefreshCw, Check, Loader2, Sparkles, MapPin, Briefcase, BadgeCheck, ShieldAlert, X } from 'lucide-react';
+import { VoiceMatchModal } from '../components/VoiceMatchModal';
+import { SlidersHorizontal, RefreshCw, Check, Loader2, Sparkles, MapPin, Briefcase, BadgeCheck, ShieldAlert, X, Mic } from 'lucide-react';
 
 interface DiscoverScreenProps {
   currentUser: UserProfile;
@@ -26,6 +27,7 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
   const [matchedConversationId, setMatchedConversationId] = useState<number | undefined>(undefined);
   const [detailProfile, setDetailProfile] = useState<UserProfile | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showVoiceMatch, setShowVoiceMatch] = useState(false);
   const [safetyTargetProfile, setSafetyTargetProfile] = useState<UserProfile | null>(null);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -178,6 +180,27 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <button
+              onClick={() => setShowVoiceMatch(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '6px 12px',
+                borderRadius: '20px',
+                background: 'linear-gradient(135deg, #FF3366, #9B51E0)',
+                color: '#fff',
+                fontSize: '12px',
+                fontWeight: 700,
+                border: 'none',
+                boxShadow: '0 2px 10px rgba(255, 51, 102, 0.4)',
+                cursor: 'pointer',
+              }}
+            >
+              <Mic size={13} color="#fff" />
+              <span>Voice Match</span>
+            </button>
+
+            <button
               onClick={() => loadCandidates()}
               disabled={isLoading}
               style={{
@@ -251,6 +274,30 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              onClick={() => setShowVoiceMatch(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '7px',
+                padding: '8px 16px',
+                borderRadius: '20px',
+                background: 'linear-gradient(135deg, #FF3366, #9B51E0)',
+                color: '#fff',
+                fontSize: '13px',
+                fontWeight: 700,
+                border: 'none',
+                cursor: 'pointer',
+                boxShadow: '0 4px 14px rgba(255, 51, 102, 0.4)',
+                transition: 'transform 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.03)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            >
+              <Mic size={15} color="#fff" />
+              <span>Voice Match (1 min)</span>
+            </button>
+
             <button
               onClick={() => loadCandidates()}
               disabled={isLoading}
@@ -661,6 +708,23 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
             setProfiles(prev => prev.filter(p => p.userId !== safetyTargetProfile.userId));
             showToast(act === 'block' ? 'User blocked successfully' : 'Report submitted to moderators', 'info');
           }}
+        />
+      )}
+
+      {/* 1-Minute Voice Match Modal */}
+      {showVoiceMatch && (
+        <VoiceMatchModal
+          currentUser={currentUser}
+          availableProfiles={profiles}
+          onClose={() => setShowVoiceMatch(false)}
+          onMutualMatch={(matched) => {
+            showToast(`You have a new mutual match with ${matched.displayName || 'Partner'}!`, 'success');
+          }}
+          onNavigateToChat={(convId) => {
+            setShowVoiceMatch(false);
+            if (convId) onNavigateToChat(convId);
+          }}
+          showToast={showToast}
         />
       )}
     </div>
