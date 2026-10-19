@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { UserProfile, VoiceSignalDto } from '../api/types';
 import apiClient from '../api/apiClient';
+import { Room, RoomEvent, Track, RemoteTrack } from 'livekit-client';
 import {
   Mic,
   MicOff,
@@ -88,6 +89,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
   const animFrameIdRef = useRef<number | null>(null);
   const isMicAllowedRef = useRef(false);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const livekitRoomRef = useRef<Room | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const processedSignalsRef = useRef<Set<string>>(new Set());
 
@@ -127,7 +129,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
             setCallState('connected');
             setTimeLeft(60);
             showToast(`Connected with ${getProfileName(res.peer)}! You have 60 seconds.`, 'info');
-            initLiveAudio(res.roomId!, res.isInitiator || false);
+            initLiveAudio(res.roomId!, res.isInitiator || false, res.livekitUrl, res.livekitToken);
             return;
           }
 
@@ -145,7 +147,7 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
                 setCallState('connected');
                 setTimeLeft(60);
                 showToast(`Live Voice Connected with ${getProfileName(status.peer)}!`, 'success');
-                initLiveAudio(status.roomId!, status.isInitiator || false);
+                initLiveAudio(status.roomId!, status.isInitiator || false, status.livekitUrl, status.livekitToken);
               }
             } catch {
               // ignore polling error
@@ -195,8 +197,40 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     };
   }, [callState, availableProfiles, currentUser.id]);
 
-  // Step 2: Initialize WebRTC Live 2-Way Audio Streaming
-  const initLiveAudio = async (activeRoomId: string, isInitiator: boolean) => {
+  // Step 2: Initialize LiveKit / WebRTC Live 2-Way Audio Streaming
+  const initLiveAudio = async (
+    activeRoomId: string,
+    isInitiator: boolean,
+    livekitUrl?: string,
+    livekitToken?: string
+  ) => {
+    // Attempt LiveKit Cloud connection first if token & URL are provided
+    if (livekitUrl && livekitToken) {
+      try {
+        const room = new Room({
+          adaptiveStream: true,
+          dynacast: true,
+        });
+        livekitRoomRef.current = room;
+
+        room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
+          if (track.kind === Track.Kind.Audio && remoteAudioRef.current) {
+            track.attach(remoteAudioRef.current);
+          }
+        });
+
+        await room.connect(livekitUrl, livekitToken);
+        await room.localParticipant.setMicrophoneEnabled(true);
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        mediaStreamRef.current = stream;
+        isMicAllowedRef.current = true;
+        return;
+      } catch (err) {
+        console.warn('LiveKit connection error, falling back to WebRTC P2P:', err);
+      }
+    }
+
     try {
       const pc = new RTCPeerConnection({
         iceServers: [
@@ -419,6 +453,11 @@ export const VoiceMatchModal: React.FC<VoiceMatchModalProps> = ({
     }
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    if (livekitRoomRef.current) {
+      livekitRoomRef.current.disconnect();
+      livekitRoomRef.current = null;
     }
     apiClient.leaveVoiceQueue().catch(() => {});
     onClose();
