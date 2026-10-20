@@ -257,3 +257,16 @@ input:focus, textarea:focus, select:focus {
   border-color: var(--primary-pink);
   box-shadow: 0 0 0 2px rgba(255, 51, 102, 0.2);
 }
+
+/* Stories Tray Smooth Horizontal Scroll without visible scrollbar */
+.stories-tray-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+.stories-tray-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+

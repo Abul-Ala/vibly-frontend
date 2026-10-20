@@ -290,7 +290,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Stories Tray Inside Sidebar */}
-      <div style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+      <div style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)', flexShrink: 0 }}>
         <StoriesTray
           groups={storyGroups}
           myAvatarUrl={apiClient.getPrimaryPhoto(currentUser)}

@@ -21,15 +21,22 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
   const hasMyStories = myGroup && myGroup.stories.length > 0;
 
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: '14px',
-      padding: '12px 16px',
-      overflowX: 'auto',
-      scrollbarWidth: 'none',
-      msOverflowStyle: 'none',
-    }}>
+    <div
+      className="stories-tray-scroll"
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '14px',
+        padding: '12px 18px',
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
+        flexShrink: 0,
+        minHeight: '108px',
+        boxSizing: 'border-box',
+      }}
+    >
       {/* My Story Node */}
       <div
         onClick={hasMyStories ? () => onOpenGroup(myGroupIndex) : onAddStory}
@@ -40,6 +47,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
           gap: '6px',
           cursor: 'pointer',
           flexShrink: 0,
+          width: '68px',
         }}
       >
         <div style={{
@@ -49,6 +57,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
           borderRadius: '50%',
           padding: hasMyStories ? '2.5px' : '0px',
           background: hasMyStories ? 'var(--romantic-gradient)' : 'transparent',
+          flexShrink: 0,
         }}>
           <img
             src={apiClient.resolveMediaUrl(myAvatarUrl) || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800'}
@@ -59,6 +68,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
               borderRadius: '50%',
               objectFit: 'cover',
               border: hasMyStories ? '2px solid var(--surface-dark)' : '1px solid rgba(255, 255, 255, 0.15)',
+              display: 'block',
             }}
           />
 
@@ -98,6 +108,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
           textAlign: 'center',
+          lineHeight: '14px',
         }}>
           {hasMyStories ? 'Your Story' : 'Add Story'}
         </span>
@@ -119,6 +130,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
               gap: '6px',
               cursor: 'pointer',
               flexShrink: 0,
+              width: '68px',
             }}
           >
             <div style={{
@@ -128,6 +140,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
               padding: '2.5px',
               background: 'var(--flame-gradient)',
               boxShadow: '0 0 12px rgba(255, 51, 102, 0.35)',
+              flexShrink: 0,
             }}>
               <img
                 src={avatar}
@@ -138,6 +151,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
                   borderRadius: '50%',
                   objectFit: 'cover',
                   border: '2px solid var(--surface-dark)',
+                  display: 'block',
                 }}
               />
             </div>
@@ -150,6 +164,7 @@ export const StoriesTray: React.FC<StoriesTrayProps> = ({
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
               textAlign: 'center',
+              lineHeight: '14px',
             }}>
               {group.userName ? group.userName.split(' ')[0] : 'Member'}
             </span>

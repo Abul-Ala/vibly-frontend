@@ -144,6 +144,7 @@ export const MatchesScreen: React.FC<MatchesScreenProps> = ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '16px 20px 8px',
+        flexShrink: 0,
       }}>
         <h1 style={{
           fontSize: '24px',
@@ -172,16 +173,18 @@ export const MatchesScreen: React.FC<MatchesScreenProps> = ({
         </button>
       </div>
 
-      {/* Stories Tray */}
-      <StoriesTray
-        groups={storyGroups}
-        myAvatarUrl={apiClient.getPrimaryPhoto(currentUser)}
-        onOpenGroup={(idx) => setActiveStoryGroupIndex(idx)}
-        onAddStory={() => setShowAddStory(true)}
-      />
+      {/* Stories Tray Wrapper */}
+      <div style={{ flexShrink: 0, width: '100%' }}>
+        <StoriesTray
+          groups={storyGroups}
+          myAvatarUrl={apiClient.getPrimaryPhoto(currentUser)}
+          onOpenGroup={(idx) => setActiveStoryGroupIndex(idx)}
+          onAddStory={() => setShowAddStory(true)}
+        />
+      </div>
 
       {/* Search Input Bar */}
-      <div style={{ padding: '8px 20px 12px' }}>
+      <div style={{ padding: '8px 20px 12px', flexShrink: 0 }}>
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -211,7 +214,7 @@ export const MatchesScreen: React.FC<MatchesScreenProps> = ({
 
       {/* Who Liked You Section */}
       {likesReceived.length > 0 && (
-        <div style={{ padding: '0 20px 16px' }}>
+        <div style={{ padding: '0 20px 16px', flexShrink: 0 }}>
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -306,7 +309,7 @@ export const MatchesScreen: React.FC<MatchesScreenProps> = ({
 
       {/* New Matches Horizontal Carousel */}
       {matches.length > 0 && (
-        <div style={{ padding: '0 20px 16px' }}>
+        <div style={{ padding: '0 20px 16px', flexShrink: 0 }}>
           <div style={{
             fontSize: '13px',
             fontWeight: 800,
