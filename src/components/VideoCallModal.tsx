@@ -45,10 +45,54 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const remoteVideoTrackRef = useRef<RemoteTrack | null>(null);
+  const remoteAudioTrackRef = useRef<RemoteTrack | null>(null);
   const livekitRoomRef = useRef<Room | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const timerIntervalRef = useRef<any>(null);
   const sseRef = useRef<EventSource | null>(null);
+
+  // Helper to attach remote track to appropriate DOM element
+  const attachRemoteTrack = (track: Track) => {
+    if (track.kind === Track.Kind.Video) {
+      remoteVideoTrackRef.current = track as RemoteTrack;
+      setHasRemoteVideo(true);
+      if (remoteVideoRef.current) {
+        try {
+          track.attach(remoteVideoRef.current);
+          remoteVideoRef.current.play().catch(() => {});
+        } catch (e) {
+          console.warn('Could not attach remote video track:', e);
+        }
+      }
+    } else if (track.kind === Track.Kind.Audio) {
+      remoteAudioTrackRef.current = track as RemoteTrack;
+      if (remoteAudioRef.current) {
+        try {
+          track.attach(remoteAudioRef.current);
+          remoteAudioRef.current.play().catch(() => {});
+        } catch (e) {
+          console.warn('Could not attach remote audio track:', e);
+        }
+      }
+    }
+  };
+
+  // Re-attach tracks if ref becomes available or state updates
+  useEffect(() => {
+    if (remoteVideoTrackRef.current && remoteVideoRef.current) {
+      try {
+        remoteVideoTrackRef.current.attach(remoteVideoRef.current);
+        remoteVideoRef.current.play().catch(() => {});
+      } catch {}
+    }
+    if (remoteAudioTrackRef.current && remoteAudioRef.current) {
+      try {
+        remoteAudioTrackRef.current.attach(remoteAudioRef.current);
+        remoteAudioRef.current.play().catch(() => {});
+      } catch {}
+    }
+  }, [hasRemoteVideo, call.status]);
 
   // Determine peer user profile
   const isCaller = currentUser.userId === call.callerId || currentUser.id === call.callerId;
@@ -181,15 +225,11 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
         if (!livekitToken) {
           console.warn('No LiveKit token available for video call');
           setIsConnectingLiveKit(false);
-          // Fallback to local camera preview
-          startLocalCamera();
           return;
         }
 
         try {
           const room = new Room({
-            adaptiveStream: true,
-            dynacast: true,
             videoCaptureDefaults: {
               resolution: { width: 1280, height: 720, frameRate: 30 },
               facingMode: facingMode,
@@ -197,22 +237,86 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
           });
           livekitRoomRef.current = room;
 
-          // Track Subscribed (Remote participant's video or audio)
+          // Helper to sync all tracks from all remote participants
+          const syncAllRemoteTracks = () => {
+            if (!isMounted || !livekitRoomRef.current) return;
+            livekitRoomRef.current.remoteParticipants.forEach((participant) => {
+              participant.trackPublications.forEach((pub) => {
+                if (pub.track) {
+                  attachRemoteTrack(pub.track);
+                }
+              });
+            });
+          };
+
+          // 1. Listen for new subscriptions
           room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => {
             if (!isMounted) return;
-            if (track.kind === Track.Kind.Video && remoteVideoRef.current) {
-              track.attach(remoteVideoRef.current);
-              setHasRemoteVideo(true);
-            }
-            if (track.kind === Track.Kind.Audio && remoteAudioRef.current) {
-              track.attach(remoteAudioRef.current);
+            attachRemoteTrack(track);
+          });
+
+          // 2. Also listen for TrackPublished when track is already available
+          room.on(RoomEvent.TrackPublished, (pub) => {
+            if (!isMounted) return;
+            if (pub.isSubscribed && pub.track) {
+              attachRemoteTrack(pub.track);
             }
           });
 
+          // 3. Unsubscribed
           room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
             if (!isMounted) return;
             if (track.kind === Track.Kind.Video) {
+              if (remoteVideoRef.current) {
+                try { track.detach(remoteVideoRef.current); } catch {}
+              }
               setHasRemoteVideo(false);
+              if (remoteVideoTrackRef.current === track) {
+                remoteVideoTrackRef.current = null;
+              }
+            } else if (track.kind === Track.Kind.Audio) {
+              if (remoteAudioRef.current) {
+                try { track.detach(remoteAudioRef.current); } catch {}
+              }
+              if (remoteAudioTrackRef.current === track) {
+                remoteAudioTrackRef.current = null;
+              }
+            }
+          });
+
+          // 4. Track Muted / Unmuted (only for remote participant video)
+          room.on(RoomEvent.TrackMuted, (pub, participant) => {
+            if (!isMounted) return;
+            if (participant !== room.localParticipant && pub.kind === Track.Kind.Video) {
+              setHasRemoteVideo(false);
+            }
+          });
+
+          room.on(RoomEvent.TrackUnmuted, (pub, participant) => {
+            if (!isMounted) return;
+            if (participant !== room.localParticipant && pub.kind === Track.Kind.Video && pub.track) {
+              attachRemoteTrack(pub.track);
+            }
+          });
+
+          // 5. Remote Participant Connected
+          room.on(RoomEvent.ParticipantConnected, (participant) => {
+            if (!isMounted) return;
+            participant.trackPublications.forEach((pub) => {
+              if (pub.track) {
+                attachRemoteTrack(pub.track);
+              }
+            });
+          });
+
+          // 6. Local Track Published (attach local preview)
+          room.on(RoomEvent.LocalTrackPublished, (pub) => {
+            if (!isMounted) return;
+            if (pub.track && pub.track.kind === Track.Kind.Video && localVideoRef.current) {
+              try {
+                (pub.track as LocalVideoTrack).attach(localVideoRef.current);
+                localVideoRef.current.play().catch(() => {});
+              } catch {}
             }
           });
 
@@ -222,26 +326,42 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
             cleanupAndClose();
           });
 
+          // Connect to room
           await room.connect(livekitUrl, livekitToken);
 
-          // Enable microphone and camera
-          await room.localParticipant.setMicrophoneEnabled(true);
-          await room.localParticipant.setCameraEnabled(true);
-
-          // Attach local camera to self preview
-          const localTrackPub = Array.from(room.localParticipant.videoTrackPublications.values())[0];
-          if (localTrackPub && localTrackPub.track && localVideoRef.current) {
-            (localTrackPub.track as LocalVideoTrack).attach(localVideoRef.current);
-          } else {
-            startLocalCamera();
+          // Enable microphone and camera cleanly via LiveKit
+          try {
+            await room.localParticipant.setMicrophoneEnabled(true);
+            const videoPub = await room.localParticipant.setCameraEnabled(true);
+            if (videoPub && videoPub.track && localVideoRef.current) {
+              (videoPub.track as LocalVideoTrack).attach(localVideoRef.current);
+              localVideoRef.current.play().catch(() => {});
+            }
+          } catch (camErr) {
+            console.warn('Error enabling camera/mic in LiveKit:', camErr);
           }
+
+          // Initial check for local video tracks in case pub was delayed
+          room.localParticipant.videoTrackPublications.forEach((pub) => {
+            if (pub.track && localVideoRef.current) {
+              (pub.track as LocalVideoTrack).attach(localVideoRef.current);
+              localVideoRef.current.play().catch(() => {});
+            }
+          });
+
+          // Crucial: Attach tracks of participants who were ALREADY in the room before we joined!
+          syncAllRemoteTracks();
+
+          // Double check with timers to catch in-flight WebRTC negotiation
+          setTimeout(syncAllRemoteTracks, 300);
+          setTimeout(syncAllRemoteTracks, 1000);
+          setTimeout(syncAllRemoteTracks, 2500);
 
           if (isMounted) setIsConnectingLiveKit(false);
         } catch (err) {
-          console.warn('LiveKit room connection error, fallback to local camera:', err);
+          console.warn('LiveKit room connection error:', err);
           if (isMounted) {
             setIsConnectingLiveKit(false);
-            startLocalCamera();
           }
         }
       };
@@ -434,7 +554,14 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
         if (videoDevices.length > 1) {
-          await livekitRoomRef.current.localParticipant.setCameraEnabled(true);
+          await livekitRoomRef.current.localParticipant.setCameraEnabled(true, {
+            facingMode: nextMode,
+          });
+          livekitRoomRef.current.localParticipant.videoTrackPublications.forEach((pub) => {
+            if (pub.track && localVideoRef.current) {
+              (pub.track as LocalVideoTrack).attach(localVideoRef.current);
+            }
+          });
         }
       } catch {
         // ignore
@@ -502,16 +629,17 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
       <audio ref={remoteAudioRef} autoPlay />
 
       {/* ============================================================== */}
-      {/* 1. OUTGOING RINGING VIEW */}
+      {/* 1. OUTGOING RINGING OVERLAY (Displayed when status is RINGING) */}
       {/* ============================================================== */}
-      {call.status === 'RINGING' ? (
+      {call.status === 'RINGING' && (
         <div style={{
-          flex: 1,
+          position: 'absolute',
+          inset: 0,
+          zIndex: 40,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          position: 'relative',
           padding: '24px',
           background: 'radial-gradient(circle at center, #1E122A 0%, #0A0A14 85%)',
         }}>
@@ -605,341 +733,345 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
             Cancel
           </span>
         </div>
-      ) : (
-        /* ============================================================== */
-        /* 2. CONNECTED 2-WAY LIVEKIT VIDEO VIEW */
-        /* ============================================================== */
-        <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', height: '100%' }}>
-          {/* Main Remote Video Container */}
-          <div style={{
-            flex: 1,
-            position: 'relative',
-            backgroundColor: '#0D0E15',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-          }}>
-            {/* Live Remote Video Tag */}
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                display: hasRemoteVideo ? 'block' : 'none',
-              }}
-            />
+      )}
 
-            {/* If Remote Video is Not Yet Published or Camera Off */}
-            {!hasRemoteVideo && (
-              <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '16px',
-                zIndex: 1,
-              }}>
-                <div style={{ position: 'relative', width: '130px', height: '130px' }}>
-                  <img
-                    src={peerPhoto}
-                    alt={peerName}
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      borderRadius: '50%',
-                      objectFit: 'cover',
-                      border: '3px solid rgba(255, 51, 102, 0.6)',
-                      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
-                    }}
-                  />
-                </div>
-                <div style={{ textAlign: 'center' }}>
-                  <h3 style={{ fontSize: '20px', fontWeight: 700, color: '#ffffff', margin: '0 0 4px 0' }}>
-                    {peerName}
-                  </h3>
-                  <span style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.6)' }}>
-                    {isConnectingLiveKit ? 'Connecting HD video...' : 'Camera is muted / connecting stream'}
-                  </span>
-                </div>
-                {/* Audio Waves Simulation */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '30px' }}>
-                  {[1, 2, 3, 4, 5].map((i) => (
-                    <div
-                      key={i}
-                      style={{
-                        width: '4px',
-                        backgroundColor: '#FF3366',
-                        borderRadius: '2px',
-                        animation: `soundWave 1.2s infinite ease-in-out ${i * 0.18}s`,
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Top Overlay Header */}
-            <div style={{
+      {/* ============================================================== */}
+      {/* 2. CONNECTED 2-WAY LIVEKIT VIDEO VIEW (Always mounted in DOM) */}
+      {/* ============================================================== */}
+      <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', height: '100%' }}>
+        {/* Main Remote Video Container */}
+        <div style={{
+          flex: 1,
+          position: 'relative',
+          backgroundColor: '#0D0E15',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+        }}>
+          {/* Live Remote Video Tag - Always mounted and muted to allow seamless autoplay */}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
               position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              padding: '20px 24px',
+              inset: 0,
+              opacity: (hasRemoteVideo && call.status === 'ACCEPTED') ? 1 : 0,
+              transition: 'opacity 0.25s ease',
+            }}
+          />
+
+          {/* If Remote Video is Not Yet Published or Camera Off */}
+          {(!hasRemoteVideo || call.status !== 'ACCEPTED') && (
+            <div style={{
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
-              justifyContent: 'space-between',
-              background: 'linear-gradient(180deg, rgba(0, 0, 0, 0.8) 0%, transparent 100%)',
-              zIndex: 10,
+              gap: '16px',
+              zIndex: 1,
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ position: 'relative', width: '130px', height: '130px' }}>
                 <img
                   src={peerPhoto}
                   alt={peerName}
                   style={{
-                    width: '40px',
-                    height: '40px',
+                    width: '100%',
+                    height: '100%',
                     borderRadius: '50%',
                     objectFit: 'cover',
-                    border: '2px solid #FF3366',
+                    border: '3px solid rgba(255, 51, 102, 0.6)',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
                   }}
                 />
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <h4 style={{ fontSize: '16px', fontWeight: 700, color: '#ffffff', margin: 0 }}>
-                      {peerName}
-                    </h4>
-                    {peerProfile?.isVerified && (
-                      <BadgeCheck size={16} fill="#00D2FF" color="#ffffff" />
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#10B981', fontWeight: 600 }}>
-                    <span style={{
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      backgroundColor: '#10B981',
-                      display: 'inline-block',
-                      boxShadow: '0 0 8px #10B981',
-                    }} />
-                    <span>LIVE</span>
-                    <span style={{ color: 'rgba(255, 255, 255, 0.4)' }}>•</span>
-                    <span style={{ color: 'rgba(255, 255, 255, 0.8)' }}>{formatDuration(callDuration)}</span>
-                  </div>
-                </div>
               </div>
+              <div style={{ textAlign: 'center' }}>
+                <h3 style={{ fontSize: '20px', fontWeight: 700, color: '#ffffff', margin: '0 0 4px 0' }}>
+                  {peerName}
+                </h3>
+                <span style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.6)' }}>
+                  {isConnectingLiveKit ? 'Connecting HD video...' : 'Camera is muted / connecting stream'}
+                </span>
+              </div>
+              {/* Audio Waves Simulation */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', height: '30px' }}>
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <div
+                    key={i}
+                    style={{
+                      width: '4px',
+                      backgroundColor: '#FF3366',
+                      borderRadius: '2px',
+                      animation: `soundWave 1.2s infinite ease-in-out ${i * 0.18}s`,
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
-              {/* Quality & Connection Pill */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                borderRadius: '16px',
-                backgroundColor: 'rgba(255, 255, 255, 0.12)',
-                backdropFilter: 'blur(10px)',
-                color: '#ffffff',
-                fontSize: '12px',
-                fontWeight: 600,
-              }}>
-                <Signal size={14} color="#10B981" />
-                <span>HD Video</span>
+          {/* Top Overlay Header */}
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            padding: '20px 24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'linear-gradient(180deg, rgba(0, 0, 0, 0.8) 0%, transparent 100%)',
+            zIndex: 10,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <img
+                src={peerPhoto}
+                alt={peerName}
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '2px solid #FF3366',
+                }}
+              />
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <h4 style={{ fontSize: '16px', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+                    {peerName}
+                  </h4>
+                  {peerProfile?.isVerified && (
+                    <BadgeCheck size={16} fill="#00D2FF" color="#ffffff" />
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#10B981', fontWeight: 600 }}>
+                  <span style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    backgroundColor: '#10B981',
+                    display: 'inline-block',
+                    boxShadow: '0 0 8px #10B981',
+                  }} />
+                  <span>LIVE</span>
+                  <span style={{ color: 'rgba(255, 255, 255, 0.4)' }}>•</span>
+                  <span style={{ color: 'rgba(255, 255, 255, 0.8)' }}>{formatDuration(callDuration)}</span>
+                </div>
               </div>
             </div>
 
-            {/* Picture-in-Picture Local Self Preview */}
+            {/* Quality & Connection Pill */}
             <div style={{
-              position: 'absolute',
-              bottom: '100px',
-              right: '20px',
-              width: isPipMinimized ? '70px' : '130px',
-              height: isPipMinimized ? '95px' : '175px',
-              borderRadius: '18px',
-              overflow: 'hidden',
-              backgroundColor: '#1A1B26',
-              border: '2px solid rgba(255, 255, 255, 0.25)',
-              boxShadow: '0 12px 30px rgba(0, 0, 0, 0.7)',
-              zIndex: 20,
-              transition: 'all 0.25s ease',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '16px',
+              backgroundColor: 'rgba(255, 255, 255, 0.12)',
+              backdropFilter: 'blur(10px)',
+              color: '#ffffff',
+              fontSize: '12px',
+              fontWeight: 600,
             }}>
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  transform: facingMode === 'user' ? 'scaleX(-1)' : 'none',
-                  display: isCameraOff ? 'none' : 'block',
-                }}
-              />
-              {isCameraOff && (
-                <div style={{
-                  width: '100%',
-                  height: '100%',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: '#181926',
-                }}>
-                  <img
-                    src={myPhoto}
-                    alt="Me"
-                    style={{ width: '42px', height: '42px', borderRadius: '50%', objectFit: 'cover', marginBottom: '4px' }}
-                  />
-                  <span style={{ fontSize: '10px', color: 'rgba(255, 255, 255, 0.5)' }}>Off</span>
-                </div>
-              )}
-              {/* Local Video Tag Badge */}
-              <div style={{
-                position: 'absolute',
-                top: '6px',
-                left: '8px',
-                fontSize: '10px',
-                fontWeight: 700,
-                color: '#ffffff',
-                backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                padding: '2px 6px',
-                borderRadius: '8px',
-              }}>
-                You
-              </div>
-              {/* Resize PIP button */}
-              <button
-                onClick={() => setIsPipMinimized(prev => !prev)}
-                title={isPipMinimized ? 'Expand Preview' : 'Minimize Preview'}
-                style={{
-                  position: 'absolute',
-                  top: '6px',
-                  right: '6px',
-                  width: '20px',
-                  height: '20px',
-                  borderRadius: '50%',
-                  backgroundColor: 'rgba(0, 0, 0, 0.6)',
-                  color: '#ffffff',
-                  border: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                }}
-              >
-                {isPipMinimized ? <Maximize2 size={10} /> : <Minimize2 size={10} />}
-              </button>
+              <Signal size={14} color="#10B981" />
+              <span>HD Video</span>
             </div>
           </div>
 
-          {/* Bottom Floating Controls Bar */}
+          {/* Picture-in-Picture Local Self Preview */}
           <div style={{
             position: 'absolute',
-            bottom: '24px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '16px',
-            padding: '12px 24px',
-            borderRadius: '40px',
-            backgroundColor: 'rgba(15, 16, 26, 0.85)',
-            backdropFilter: 'blur(20px)',
-            border: '1px solid rgba(255, 255, 255, 0.14)',
-            boxShadow: '0 16px 40px rgba(0, 0, 0, 0.6)',
-            zIndex: 30,
+            bottom: '100px',
+            right: '20px',
+            width: isPipMinimized ? '70px' : '130px',
+            height: isPipMinimized ? '95px' : '175px',
+            borderRadius: '18px',
+            overflow: 'hidden',
+            backgroundColor: '#1A1B26',
+            border: '2px solid rgba(255, 255, 255, 0.25)',
+            boxShadow: '0 12px 30px rgba(0, 0, 0, 0.7)',
+            zIndex: 20,
+            transition: 'all 0.25s ease',
           }}>
-            {/* Toggle Mute */}
-            <button
-              onClick={handleToggleMute}
-              title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
               style={{
-                width: '50px',
-                height: '50px',
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                transform: facingMode === 'user' ? 'scaleX(-1)' : 'none',
+                display: isCameraOff ? 'none' : 'block',
+              }}
+            />
+            {isCameraOff && (
+              <div style={{
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#181926',
+              }}>
+                <img
+                  src={myPhoto}
+                  alt="Me"
+                  style={{ width: '42px', height: '42px', borderRadius: '50%', objectFit: 'cover', marginBottom: '4px' }}
+                />
+                <span style={{ fontSize: '10px', color: 'rgba(255, 255, 255, 0.5)' }}>Off</span>
+              </div>
+            )}
+            {/* Local Video Tag Badge */}
+            <div style={{
+              position: 'absolute',
+              top: '6px',
+              left: '8px',
+              fontSize: '10px',
+              fontWeight: 700,
+              color: '#ffffff',
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              padding: '2px 6px',
+              borderRadius: '8px',
+            }}>
+              You
+            </div>
+            {/* Resize PIP button */}
+            <button
+              onClick={() => setIsPipMinimized(prev => !prev)}
+              title={isPipMinimized ? 'Expand Preview' : 'Minimize Preview'}
+              style={{
+                position: 'absolute',
+                top: '6px',
+                right: '6px',
+                width: '20px',
+                height: '20px',
                 borderRadius: '50%',
-                backgroundColor: isMuted ? '#EB5757' : 'rgba(255, 255, 255, 0.12)',
+                backgroundColor: 'rgba(0, 0, 0, 0.6)',
                 color: '#ffffff',
                 border: 'none',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
               }}
             >
-              {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
-            </button>
-
-            {/* Toggle Camera */}
-            <button
-              onClick={handleToggleCamera}
-              title={isCameraOff ? 'Turn Video On' : 'Turn Video Off'}
-              style={{
-                width: '50px',
-                height: '50px',
-                borderRadius: '50%',
-                backgroundColor: isCameraOff ? '#EB5757' : 'rgba(255, 255, 255, 0.12)',
-                color: '#ffffff',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              {isCameraOff ? <VideoOff size={20} /> : <VideoIcon size={20} />}
-            </button>
-
-            {/* Flip Camera */}
-            <button
-              onClick={handleFlipCamera}
-              title="Flip Camera (Front/Back)"
-              style={{
-                width: '50px',
-                height: '50px',
-                borderRadius: '50%',
-                backgroundColor: 'rgba(255, 255, 255, 0.12)',
-                color: '#ffffff',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <SwitchCamera size={20} />
-            </button>
-
-            {/* End Call Button */}
-            <button
-              onClick={handleEndCall}
-              title="End Video Call"
-              style={{
-                width: '54px',
-                height: '54px',
-                borderRadius: '50%',
-                backgroundColor: '#EB5757',
-                color: '#ffffff',
-                border: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                boxShadow: '0 6px 20px rgba(235, 87, 87, 0.6)',
-                transition: 'transform 0.15s ease',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.08)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
-            >
-              <PhoneOff size={24} />
+              {isPipMinimized ? <Maximize2 size={10} /> : <Minimize2 size={10} />}
             </button>
           </div>
         </div>
-      )}
+
+        {/* Bottom Floating Controls Bar */}
+        <div style={{
+          position: 'absolute',
+          bottom: '24px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+          padding: '12px 24px',
+          borderRadius: '40px',
+          backgroundColor: 'rgba(15, 16, 26, 0.85)',
+          backdropFilter: 'blur(20px)',
+          border: '1px solid rgba(255, 255, 255, 0.14)',
+          boxShadow: '0 16px 40px rgba(0, 0, 0, 0.6)',
+          zIndex: 30,
+        }}>
+          {/* Toggle Mute */}
+          <button
+            onClick={handleToggleMute}
+            title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+            style={{
+              width: '50px',
+              height: '50px',
+              borderRadius: '50%',
+              backgroundColor: isMuted ? '#EB5757' : 'rgba(255, 255, 255, 0.12)',
+              color: '#ffffff',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+          </button>
+
+          {/* Toggle Camera */}
+          <button
+            onClick={handleToggleCamera}
+            title={isCameraOff ? 'Turn Video On' : 'Turn Video Off'}
+            style={{
+              width: '50px',
+              height: '50px',
+              borderRadius: '50%',
+              backgroundColor: isCameraOff ? '#EB5757' : 'rgba(255, 255, 255, 0.12)',
+              color: '#ffffff',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            {isCameraOff ? <VideoOff size={20} /> : <VideoIcon size={20} />}
+          </button>
+
+          {/* Flip Camera */}
+          <button
+            onClick={handleFlipCamera}
+            title="Flip Camera (Front/Back)"
+            style={{
+              width: '50px',
+              height: '50px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(255, 255, 255, 0.12)',
+              color: '#ffffff',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <SwitchCamera size={20} />
+          </button>
+
+          {/* End Call Button */}
+          <button
+            onClick={handleEndCall}
+            title="End Video Call"
+            style={{
+              width: '54px',
+              height: '54px',
+              borderRadius: '50%',
+              backgroundColor: '#EB5757',
+              color: '#ffffff',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 6px 20px rgba(235, 87, 87, 0.6)',
+              transition: 'transform 0.15s ease',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.08)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+          >
+            <PhoneOff size={24} />
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
