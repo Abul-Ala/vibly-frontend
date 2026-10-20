@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { UserProfile, Interest } from '../api/types';
 import apiClient from '../api/apiClient';
-import { ArrowLeft, Save, Loader2, Sparkles, MapPin, Navigation, EyeOff } from 'lucide-react';
-import { detectLocation } from '../utils/locationService';
+import { ArrowLeft, Save, Loader2, Sparkles } from 'lucide-react';
 
 interface EditProfileScreenProps {
   currentUser: UserProfile;
@@ -21,10 +20,6 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
   const [bio, setBio] = useState(currentUser.bio || '');
   const [occupation, setOccupation] = useState(currentUser.occupation || '');
   const [city, setCity] = useState(currentUser.city || '');
-  const [latitude, setLatitude] = useState<number | undefined>(currentUser.latitude);
-  const [longitude, setLongitude] = useState<number | undefined>(currentUser.longitude);
-  const [hideDistance, setHideDistance] = useState<boolean>(currentUser.hideDistance ?? false);
-  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
   const [interestedIn, setInterestedIn] = useState(currentUser.interestedIn || 'EVERYONE');
 
   const defaultInterests: Interest[] = [
@@ -53,21 +48,6 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
     );
   };
 
-  const handleDetectLocation = async () => {
-    setIsDetectingLocation(true);
-    try {
-      const loc = await detectLocation();
-      setCity(loc.city);
-      setLatitude(loc.latitude);
-      setLongitude(loc.longitude);
-      showToast(`📍 Location detected: ${loc.city}`, 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Could not detect GPS location. Please allow browser location access.', 'error');
-    } finally {
-      setIsDetectingLocation(false);
-    }
-  };
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
@@ -77,9 +57,6 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
         bio: bio.trim(),
         occupation: occupation.trim(),
         city: city.trim(),
-        latitude,
-        longitude,
-        hideDistance,
         interestedIn,
         interestIds: selectedInterestIds,
       });
@@ -208,96 +185,17 @@ export const EditProfileScreen: React.FC<EditProfileScreenProps> = ({
           </div>
 
           <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-              <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                CITY
-              </label>
-              <button
-                type="button"
-                onClick={handleDetectLocation}
-                disabled={isDetectingLocation}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  background: 'rgba(255, 51, 102, 0.12)',
-                  border: '1px solid rgba(255, 51, 102, 0.3)',
-                  borderRadius: '12px',
-                  padding: '2px 8px',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  color: 'var(--primary-pink)',
-                  cursor: isDetectingLocation ? 'wait' : 'pointer',
-                }}
-              >
-                {isDetectingLocation ? (
-                  <>
-                    <Loader2 size={10} className="animate-spin" />
-                    <span>Detecting...</span>
-                  </>
-                ) : (
-                  <>
-                    <Navigation size={10} />
-                    <span>Detect GPS</span>
-                  </>
-                )}
-              </button>
-            </div>
-            <div style={{ position: 'relative' }}>
-              <input
-                type="text"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                placeholder="e.g. Mumbai, India"
-                style={{ width: '100%', padding: '12px 14px 12px 34px', fontSize: '14px' }}
-              />
-              <MapPin
-                size={16}
-                color="var(--primary-pink)"
-                style={{
-                  position: 'absolute',
-                  left: '11px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  pointerEvents: 'none',
-                }}
-              />
-            </div>
-            {latitude && longitude && (
-              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '3px' }}>
-                GPS: {latitude.toFixed(3)}, {longitude.toFixed(3)}
-              </div>
-            )}
+            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+              CITY
+            </label>
+            <input
+              type="text"
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              placeholder="e.g. Mumbai, India"
+              style={{ width: '100%', padding: '12px 14px', fontSize: '14px' }}
+            />
           </div>
-        </div>
-
-        {/* Distance & Location Privacy */}
-        <div style={{
-          backgroundColor: 'var(--surface-card)',
-          borderRadius: 'var(--radius-md)',
-          padding: '14px 16px',
-          border: '1px solid rgba(255, 255, 255, 0.06)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <EyeOff size={18} color="var(--primary-pink)" />
-            <div>
-              <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                Hide My Distance
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                Don't show distance in km to other users
-              </div>
-            </div>
-          </div>
-          <input
-            type="checkbox"
-            checked={hideDistance}
-            onChange={(e) => setHideDistance(e.target.checked)}
-            style={{ width: '18px', height: '18px', accentColor: 'var(--primary-pink)', cursor: 'pointer' }}
-          />
         </div>
 
         <div>

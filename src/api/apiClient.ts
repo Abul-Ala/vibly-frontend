@@ -188,13 +188,6 @@ class ApiClient {
     });
   }
 
-  async updateLocation(latitude: number, longitude: number, city?: string): Promise<UserProfile> {
-    return this.request<UserProfile>('/profiles/me/location', {
-      method: 'PUT',
-      body: JSON.stringify({ latitude, longitude, city }),
-    });
-  }
-
   async uploadProfilePhoto(file: File, isPrimary: boolean = true): Promise<UserProfile> {
     const formData = new FormData();
     formData.append('file', file);

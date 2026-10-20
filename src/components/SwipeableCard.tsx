@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { UserProfile } from '../api/types';
 import apiClient from '../api/apiClient';
 import { BadgeCheck, MapPin, Briefcase, Info, Sparkles } from 'lucide-react';
-import { formatDistance } from '../utils/locationService';
 
 interface SwipeableCardProps {
   profile: UserProfile;
@@ -324,7 +323,7 @@ export const SwipeableCard: React.FC<SwipeableCardProps> = ({
               border: '1px solid rgba(255, 255, 255, 0.08)',
             }}>
               <MapPin size={11} color="var(--primary-pink)" />
-              <span>{formatDistance(profile.distanceKm, profile.hideDistance)}</span>
+              <span>{Math.round(profile.distanceKm)} km away</span>
             </div>
           )}
         </div>

@@ -291,7 +291,6 @@ export const App: React.FC = () => {
                     <DiscoverScreen
                       currentUser={currentUser}
                       onNavigateToChat={handleNavigateToChat}
-                      onCurrentUserUpdated={(updated) => setCurrentUser(updated)}
                       showToast={showToast}
                     />
                   )}
@@ -401,7 +400,6 @@ export const App: React.FC = () => {
                   <DiscoverScreen
                     currentUser={currentUser}
                     onNavigateToChat={handleNavigateToChat}
-                    onCurrentUserUpdated={(updated) => setCurrentUser(updated)}
                     showToast={showToast}
                   />
                 )}

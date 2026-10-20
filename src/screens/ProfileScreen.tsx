@@ -14,9 +14,7 @@ import {
   Radio,
   Loader2,
   Sparkles,
-  Navigation,
 } from 'lucide-react';
-import { detectLocation } from '../utils/locationService';
 
 interface ProfileScreenProps {
   currentUser: UserProfile;
@@ -34,26 +32,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   showToast,
 }) => {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
-  const [isUpdatingLocation, setIsUpdatingLocation] = useState(false);
   const [hideDistance, setHideDistance] = useState(!!currentUser.hideDistance);
   const [hideOnlineStatus, setHideOnlineStatus] = useState(!!currentUser.hideOnlineStatus);
 
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const galleryPhotoInputRef = useRef<HTMLInputElement>(null);
-
-  const handleUpdateLocation = async () => {
-    setIsUpdatingLocation(true);
-    try {
-      const loc = await detectLocation();
-      const updated = await apiClient.updateLocation(loc.latitude, loc.longitude, loc.city);
-      onProfileUpdated(updated);
-      showToast(`📍 Location updated to ${loc.city}!`, 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Could not update GPS location. Check browser location access.', 'error');
-    } finally {
-      setIsUpdatingLocation(false);
-    }
-  };
 
   const handleUploadPhoto = async (file: File, isPrimary: boolean) => {
     setIsUploadingPhoto(true);
@@ -239,28 +222,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 {currentUser.occupation}
               </span>
             )}
-            <button
-              onClick={handleUpdateLocation}
-              disabled={isUpdatingLocation}
-              title="Click to detect current GPS location"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px',
-                background: 'rgba(255, 51, 102, 0.1)',
-                border: '1px solid rgba(255, 51, 102, 0.25)',
-                borderRadius: '14px',
-                padding: '3px 10px',
-                color: 'var(--primary-pink)',
-                fontSize: '13px',
-                fontWeight: 600,
-                cursor: isUpdatingLocation ? 'wait' : 'pointer',
-              }}
-            >
-              {isUpdatingLocation ? <Loader2 size={13} className="animate-spin" /> : <MapPin size={13} />}
-              <span>{currentUser.city || 'Detect GPS Location'}</span>
-              <span style={{ fontSize: '11px', opacity: 0.7 }}>⟳</span>
-            </button>
+            {currentUser.city && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <MapPin size={14} color="var(--primary-pink)" />
+                {currentUser.city}
+              </span>
+            )}
           </div>
 
           {/* Edit Profile Button */}

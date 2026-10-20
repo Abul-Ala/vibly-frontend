@@ -2,7 +2,6 @@ import React from 'react';
 import { UserProfile } from '../api/types';
 import apiClient from '../api/apiClient';
 import { X, BadgeCheck, MapPin, Briefcase, Heart, Sparkles, ShieldAlert } from 'lucide-react';
-import { formatDistance } from '../utils/locationService';
 
 interface ProfileDetailSheetProps {
   profile: UserProfile | null;
@@ -124,7 +123,7 @@ export const ProfileDetailSheet: React.FC<ProfileDetailSheetProps> = ({
                   </span>
                 )}
                 {!profile.hideDistance && profile.distanceKm !== undefined && profile.distanceKm !== null && (
-                  <span>• {formatDistance(profile.distanceKm, profile.hideDistance)}</span>
+                  <span>• {Math.round(profile.distanceKm)} km away</span>
                 )}
               </div>
 
