@@ -22,8 +22,6 @@ export interface UserProfile {
   bio?: string;
   occupation?: string;
   city?: string;
-  latitude?: number;
-  longitude?: number;
   isVerified?: boolean;
   hideDistance?: boolean;
   hideOnlineStatus?: boolean;
@@ -87,8 +85,6 @@ export interface RegisterRequestDto {
   interestedIn: string;
   birthDate?: string;
   city?: string;
-  latitude?: number;
-  longitude?: number;
   initialPhotoUrl?: string;
   interestIds?: number[];
 }
