@@ -449,18 +449,28 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
   }, []);
 
   // Fallback / direct camera stream helper
-  const startLocalCamera = async () => {
+  // Fallback / direct camera stream helper
+  const startLocalCamera = async (targetMode: 'user' | 'environment' = facingMode) => {
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(t => t.stop());
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facingMode },
-        audio: true,
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: targetMode } },
+          audio: true,
+        });
+      } catch {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: targetMode },
+          audio: true,
+        });
+      }
       localStreamRef.current = stream;
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
       }
     } catch (e) {
       console.warn('Could not acquire local camera/mic stream:', e);
@@ -496,32 +506,68 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
     }
   };
 
-  // Flip / Switch Camera
+  // Flip / Switch Camera (Front <-> Back)
   const handleFlipCamera = async () => {
     const nextMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(nextMode);
 
     if (livekitRoomRef.current) {
       try {
-        await livekitRoomRef.current.localParticipant.setCameraEnabled(false);
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
-        if (videoDevices.length > 1) {
-          await livekitRoomRef.current.localParticipant.setCameraEnabled(true, {
+        const videoPub = Array.from(livekitRoomRef.current.localParticipant.videoTrackPublications.values())[0];
+        if (videoPub && videoPub.track) {
+          const localTrack = videoPub.track as LocalVideoTrack;
+          let switched = false;
+
+          // Attempt 1: restartTrack with target facingMode
+          try {
+            await localTrack.restartTrack({ facingMode: nextMode });
+            switched = true;
+          } catch (e1) {
+            console.warn('restartTrack with facingMode failed, checking devices:', e1);
+          }
+
+          // Attempt 2: enumerate physical video input devices and select matching camera
+          if (!switched) {
+            try {
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              const videoDevices = devices.filter(d => d.kind === 'videoinput');
+              if (videoDevices.length > 0) {
+                const targetDevice = nextMode === 'environment'
+                  ? videoDevices.find(d => /back|rear|environment/i.test(d.label)) || videoDevices[videoDevices.length - 1]
+                  : videoDevices.find(d => /front|user|face/i.test(d.label)) || videoDevices[0];
+
+                if (targetDevice && targetDevice.deviceId) {
+                  await localTrack.restartTrack({ deviceId: { exact: targetDevice.deviceId } });
+                  switched = true;
+                }
+              }
+            } catch (e2) {
+              console.warn('restartTrack with deviceId failed:', e2);
+            }
+          }
+
+          if (localVideoRef.current) {
+            localTrack.attach(localVideoRef.current);
+            localVideoRef.current.play().catch(() => {});
+          }
+        } else {
+          // If no video publication exists yet, enable camera with the new facingMode
+          const pub = await livekitRoomRef.current.localParticipant.setCameraEnabled(true, {
             facingMode: nextMode,
           });
-          livekitRoomRef.current.localParticipant.videoTrackPublications.forEach((pub) => {
-            if (pub.track && localVideoRef.current) {
-              (pub.track as LocalVideoTrack).attach(localVideoRef.current);
-            }
-          });
+          if (pub && pub.track && localVideoRef.current) {
+            (pub.track as LocalVideoTrack).attach(localVideoRef.current);
+            localVideoRef.current.play().catch(() => {});
+          }
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn('Error flipping camera in LiveKit:', err);
       }
     } else {
-      startLocalCamera();
+      await startLocalCamera(nextMode);
     }
+
+    showToast(nextMode === 'environment' ? 'Switched to back camera' : 'Switched to front camera', 'info');
   };
 
   // End Video Call

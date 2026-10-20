@@ -252,6 +252,17 @@ class ApiClient {
     });
   }
 
+  async sendTypingStatus(conversationId: number, isTyping: boolean): Promise<void> {
+    try {
+      await this.request<void>(`/chat/conversations/${conversationId}/typing`, {
+        method: 'POST',
+        body: JSON.stringify({ isTyping }),
+      });
+    } catch {
+      // Ignore background typing notification failures
+    }
+  }
+
   // --- Stories APIs ---
   async getStoriesTray(): Promise<UserStoryGroup[]> {
     return this.request<UserStoryGroup[]>('/stories/tray');

@@ -43,6 +43,10 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   const [isBlocked, setIsBlocked] = useState(false);
   const [showSafetyModal, setShowSafetyModal] = useState(false);
   const [showProfileDrawer, setShowProfileDrawer] = useState(false);
+  const [isPeerTyping, setIsPeerTyping] = useState(false);
+  const peerTypingTimeoutRef = useRef<any>(null);
+  const sendTypingTimeoutRef = useRef<any>(null);
+  const lastTypingSentRef = useRef<number>(0);
   const [isMobile, setIsMobile] = useState(() => {
     if (typeof window === 'undefined') return false;
     return window.matchMedia('(max-width: 899px)').matches;
@@ -112,10 +116,35 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           time: incoming.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
 
+        // When a message arrives, clear peer typing status
+        setIsPeerTyping(false);
+        if (peerTypingTimeoutRef.current) {
+          clearTimeout(peerTypingTimeoutRef.current);
+        }
+
         setMessages(prev => {
           if (prev.some(m => m.id === chatMsg.id)) return prev;
           return [...prev, chatMsg];
         });
+      }
+    });
+
+    // Listen to real-time typing status from peer
+    const unsubTyping = appEventService.on('TYPING_STATUS', (payload: any) => {
+      const myId = currentUser.userId || currentUser.id;
+      if (payload && payload.conversationId === conversationId && payload.senderId !== myId) {
+        setIsPeerTyping(!!payload.isTyping);
+
+        if (peerTypingTimeoutRef.current) {
+          clearTimeout(peerTypingTimeoutRef.current);
+        }
+
+        if (payload.isTyping) {
+          // Auto-clear typing after 4 seconds as fallback
+          peerTypingTimeoutRef.current = setTimeout(() => {
+            setIsPeerTyping(false);
+          }, 4000);
+        }
       }
     });
 
@@ -127,17 +156,45 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
 
     return () => {
       unsubMessage();
+      unsubTyping();
       clearInterval(fallbackInterval);
+      if (peerTypingTimeoutRef.current) clearTimeout(peerTypingTimeoutRef.current);
+      if (sendTypingTimeoutRef.current) clearTimeout(sendTypingTimeoutRef.current);
     };
   }, [conversationId]);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages.length]);
+  }, [messages.length, isPeerTyping]);
+
+  const handleInputChange = (val: string) => {
+    setInputText(val);
+
+    const now = Date.now();
+    // Throttle outbound typing event (send at most once every 2s)
+    if (now - lastTypingSentRef.current > 2000) {
+      lastTypingSentRef.current = now;
+      apiClient.sendTypingStatus(conversationId, true);
+    }
+
+    // Debounce stop typing (send false 2.5s after last keystroke)
+    if (sendTypingTimeoutRef.current) {
+      clearTimeout(sendTypingTimeoutRef.current);
+    }
+    sendTypingTimeoutRef.current = setTimeout(() => {
+      apiClient.sendTypingStatus(conversationId, false);
+    }, 2500);
+  };
 
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputText).trim();
     if (!text || isSending || isBlocked) return;
+
+    // Clear typing status immediately on send
+    if (sendTypingTimeoutRef.current) {
+      clearTimeout(sendTypingTimeoutRef.current);
+    }
+    apiClient.sendTypingStatus(conversationId, false);
 
     setIsSending(true);
     setInputText('');
@@ -259,8 +316,21 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
                   <BadgeCheck size={16} fill="var(--verified-blue)" color="#ffffff" />
                 )}
               </div>
-              <span style={{ fontSize: '11px', color: isOnline ? 'var(--success-green)' : 'var(--text-secondary)' }}>
-                {isOnline ? 'Active now' : (otherUser?.userStatus || 'Offline')}
+              <span style={{
+                fontSize: '11px',
+                color: isPeerTyping ? 'var(--primary-pink)' : (isOnline ? 'var(--success-green)' : 'var(--text-secondary)'),
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}>
+                {isPeerTyping ? (
+                  <>
+                    <span className="typing-dot" style={{ width: '4px', height: '4px' }} />
+                    <span style={{ fontWeight: 600 }}>typing...</span>
+                  </>
+                ) : (
+                  isOnline ? 'Active now' : (otherUser?.userStatus || 'Offline')
+                )}
               </span>
             </div>
           </div>
@@ -452,6 +522,50 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               </div>
             );
           })}
+          {/* Peer Typing Indicator Bubble */}
+          {isPeerTyping && (
+            <div
+              className="animate-fade-in"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                margin: '4px 0 10px',
+                alignSelf: 'flex-start',
+              }}
+            >
+              <img
+                src={otherPhoto}
+                alt={otherUser?.displayName}
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '1.5px solid var(--primary-pink)',
+                }}
+              />
+              <div
+                style={{
+                  padding: '10px 14px',
+                  borderRadius: '18px 18px 18px 4px',
+                  backgroundColor: 'var(--surface-card)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+                }}
+              >
+                <span className="typing-dot" style={{ animationDelay: '0s' }} />
+                <span className="typing-dot" style={{ animationDelay: '0.2s' }} />
+                <span className="typing-dot" style={{ animationDelay: '0.4s' }} />
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '6px', fontWeight: 500 }}>
+                  {otherUser?.displayName?.split(' ')[0] || 'They'} is typing...
+                </span>
+              </div>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -467,7 +581,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
           <input
             type="text"
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+            onChange={(e) => handleInputChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 handleSendMessage();
