@@ -5,6 +5,7 @@ import { StoriesTray } from './StoriesTray';
 import { StoryViewerModal } from './StoryViewerModal';
 import { AddStoryModal } from './AddStoryModal';
 import { MatchCelebrationModal } from './MatchCelebrationModal';
+import appEventService from '../utils/appEventService';
 import {
   Flame,
   MessageCircle,
@@ -72,11 +73,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   useEffect(() => {
     loadSidebarData();
-    const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
+
+    // Listen to real-time events via unified SSE
+    const unsubMatch = appEventService.on('NEW_MATCH', () => {
       loadSidebarData();
-    }, 30000);
-    return () => clearInterval(interval);
+    });
+
+    const unsubMsg = appEventService.on('NEW_MESSAGE', () => {
+      loadSidebarData();
+    });
+
+    const unsubSent = appEventService.on('MESSAGE_SENT', () => {
+      loadSidebarData();
+    });
+
+    const unsubLike = appEventService.on('NEW_LIKE', () => {
+      loadSidebarData();
+    });
+
+    const unsubStory = appEventService.on('NEW_STORY', () => {
+      loadSidebarData();
+    });
+
+    // Slow fallback (60s) ONLY if SSE is disconnected
+    const fallbackInterval = setInterval(() => {
+      if (appEventService.isConnected() || (typeof document !== 'undefined' && document.hidden)) return;
+      loadSidebarData();
+    }, 60000);
+
+    return () => {
+      unsubMatch();
+      unsubMsg();
+      unsubSent();
+      unsubLike();
+      unsubStory();
+      clearInterval(fallbackInterval);
+    };
   }, []);
 
   const handleLikeBack = async (liker: LikeNotificationDto) => {

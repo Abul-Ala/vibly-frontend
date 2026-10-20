@@ -5,6 +5,7 @@ import { StoriesTray } from '../components/StoriesTray';
 import { StoryViewerModal } from '../components/StoryViewerModal';
 import { AddStoryModal } from '../components/AddStoryModal';
 import { MatchCelebrationModal } from '../components/MatchCelebrationModal';
+import appEventService from '../utils/appEventService';
 import { Search, Heart, MessageCircle, RefreshCw, Sparkles, Loader2 } from 'lucide-react';
 
 interface MatchesScreenProps {
@@ -54,11 +55,42 @@ export const MatchesScreen: React.FC<MatchesScreenProps> = ({
 
   useEffect(() => {
     loadData();
-    // Poll updates every 6 seconds
-    const interval = setInterval(() => {
+
+    // Listen for real-time updates via unified SSE (Zero unnecessary HTTP calls!)
+    const unsubMatch = appEventService.on('NEW_MATCH', () => {
       loadData();
-    }, 6000);
-    return () => clearInterval(interval);
+    });
+
+    const unsubLike = appEventService.on('NEW_LIKE', () => {
+      loadData();
+    });
+
+    const unsubMsg = appEventService.on('NEW_MESSAGE', () => {
+      loadData();
+    });
+
+    const unsubSent = appEventService.on('MESSAGE_SENT', () => {
+      loadData();
+    });
+
+    const unsubStory = appEventService.on('NEW_STORY', () => {
+      loadData();
+    });
+
+    // Slow fallback (60s) ONLY if SSE is disconnected
+    const fallbackInterval = setInterval(() => {
+      if (appEventService.isConnected() || (typeof document !== 'undefined' && document.hidden)) return;
+      loadData();
+    }, 60000);
+
+    return () => {
+      unsubMatch();
+      unsubLike();
+      unsubMsg();
+      unsubSent();
+      unsubStory();
+      clearInterval(fallbackInterval);
+    };
   }, []);
 
   const handleLikeBack = async (liker: LikeNotificationDto) => {

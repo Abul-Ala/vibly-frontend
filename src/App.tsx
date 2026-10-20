@@ -11,6 +11,7 @@ import { Sidebar } from './components/Sidebar';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import { IncomingCallModal } from './components/IncomingCallModal';
 import { VideoCallModal } from './components/VideoCallModal';
+import appEventService from './utils/appEventService';
 import { Flame, MessageCircle, User, Loader2 } from 'lucide-react';
 
 type Tab = 'discover' | 'matches' | 'profile';
@@ -85,105 +86,79 @@ export const App: React.FC = () => {
     checkAuth();
   }, []);
 
-  // Real-time polling for incoming likes
+  // Real-time Unified Server-Sent Events (SSE) Listener
   useEffect(() => {
-    if (!currentUser) return;
-
-    const pollLikes = async () => {
-      try {
-        const likes = await apiClient.getLikesReceived();
-        setLikesReceivedCount(likes.length);
-
-        if (lastLikesCountRef.current !== -1 && likes.length > lastLikesCountRef.current) {
-          const latestLiker = likes[0]?.displayName || likes[0]?.likerName || 'Someone';
-          showToast(`❤️ ${latestLiker} liked your profile!`, 'success', '❤️');
-        }
-        lastLikesCountRef.current = likes.length;
-      } catch {
-        // ignore
-      }
-    };
-
-    pollLikes();
-    const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      pollLikes();
-    }, 45000);
-    return () => clearInterval(interval);
-  }, [currentUser]);
-
-  // Real-time Incoming Video Call Listener (SSE + Polling fallback)
-  useEffect(() => {
-    if (!currentUser) return;
-
-    let isCancelled = false;
-    let sse: EventSource | null = null;
-
-    try {
-      const sseUrl = `${apiClient.baseUrl}/video-call/events?token=${apiClient.authToken || ''}`;
-      sse = new EventSource(sseUrl);
-
-      sse.addEventListener('INCOMING_CALL', (e: MessageEvent) => {
-        if (isCancelled) return;
-        try {
-          const call: VideoCallDto = JSON.parse(e.data);
-          if (call && call.status === 'RINGING') {
-            setIncomingCall(call);
-          }
-        } catch {
-          // ignore
-        }
-      });
-
-      sse.addEventListener('ACTIVE_CALL', (e: MessageEvent) => {
-        if (isCancelled) return;
-        try {
-          const call: VideoCallDto = JSON.parse(e.data);
-          const myId = currentUser.userId || currentUser.id;
-          if (call && call.status === 'RINGING' && call.targetId === myId) {
-            setIncomingCall(call);
-          }
-        } catch {
-          // ignore
-        }
-      });
-
-      sse.addEventListener('CALL_ENDED', () => {
-        if (isCancelled) return;
-        setIncomingCall(null);
-      });
-
-      sse.addEventListener('CALL_REJECTED', () => {
-        if (isCancelled) return;
-        setIncomingCall(null);
-      });
-    } catch {
-      // SSE not supported
+    if (!currentUser) {
+      appEventService.disconnect();
+      return;
     }
 
-    const pollIncoming = async () => {
-      if (isCancelled) return;
-      if (typeof document !== 'undefined' && document.hidden) return;
+    // Connect to single persistent SSE stream
+    appEventService.connect(apiClient.baseUrl, apiClient.authToken);
+
+    // Initial fetch of likes count
+    apiClient.getLikesReceived().then(likes => {
+      setLikesReceivedCount(likes.length);
+      lastLikesCountRef.current = likes.length;
+    }).catch(() => {});
+
+    // 1. Listen for new incoming video calls
+    const unsubIncoming = appEventService.on('INCOMING_CALL', (call: VideoCallDto) => {
+      if (call && call.status === 'RINGING') {
+        setIncomingCall(call);
+      }
+    });
+
+    const unsubActive = appEventService.on('ACTIVE_CALL', (call: VideoCallDto) => {
+      const myId = currentUser.userId || currentUser.id;
+      if (call && call.status === 'RINGING' && call.targetId === myId) {
+        setIncomingCall(call);
+      }
+    });
+
+    const unsubEnded = appEventService.on('CALL_ENDED', () => {
+      setIncomingCall(null);
+    });
+
+    const unsubRejected = appEventService.on('CALL_REJECTED', () => {
+      setIncomingCall(null);
+    });
+
+    // 2. Listen for real-time likes
+    const unsubLike = appEventService.on('NEW_LIKE', (like: any) => {
+      setLikesReceivedCount(prev => prev + 1);
+      const liker = like?.displayName || like?.likerName || 'Someone';
+      showToast(`❤️ ${liker} liked your profile!`, 'success', '❤️');
+    });
+
+    // 3. Listen for real-time mutual matches
+    const unsubMatch = appEventService.on('NEW_MATCH', (match: any) => {
+      const name = match?.matchedProfile?.displayName || match?.otherUser?.displayName || 'Someone';
+      showToast(`🎉 New Match with ${name}! Say hello! 💕`, 'success', '🎉');
+    });
+
+    // Passive slow fallback (45s) ONLY if SSE connection dropped
+    const fallbackInterval = setInterval(async () => {
+      if (appEventService.isConnected() || (typeof document !== 'undefined' && document.hidden)) return;
       try {
         const call = await apiClient.getActiveVideoCall();
         const myId = currentUser.userId || currentUser.id;
         if (call && call.status === 'RINGING' && call.targetId === myId) {
-          setIncomingCall(prev => prev?.callId === call.callId ? prev : call);
+          setIncomingCall(call);
         } else if (!call || call.status === 'ENDED' || call.status === 'REJECTED') {
           setIncomingCall(null);
         }
-      } catch {
-        // ignore
-      }
-    };
-
-    pollIncoming();
-    const interval = setInterval(pollIncoming, 3000);
+      } catch {}
+    }, 45000);
 
     return () => {
-      isCancelled = true;
-      clearInterval(interval);
-      if (sse) sse.close();
+      unsubIncoming();
+      unsubActive();
+      unsubEnded();
+      unsubRejected();
+      unsubLike();
+      unsubMatch();
+      clearInterval(fallbackInterval);
     };
   }, [currentUser]);
 
@@ -221,6 +196,7 @@ export const App: React.FC = () => {
   };
 
   const handleSignOut = () => {
+    appEventService.disconnect();
     apiClient.clearAuth();
     setCurrentUser(null);
     setActiveScreen('main');

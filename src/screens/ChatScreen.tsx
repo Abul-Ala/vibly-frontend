@@ -3,6 +3,7 @@ import { ChatMessage, UserProfile, VideoCallDto } from '../api/types';
 import apiClient from '../api/apiClient';
 import { ReportBlockModal } from '../components/ReportBlockModal';
 import { VideoCallModal } from '../components/VideoCallModal';
+import appEventService from '../utils/appEventService';
 import {
   ArrowLeft,
   Send,
@@ -95,8 +96,39 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
 
   useEffect(() => {
     loadConversationData();
-    const interval = setInterval(loadConversationData, 2500);
-    return () => clearInterval(interval);
+
+    // Listen to real-time incoming messages via unified SSE (Instant delivery!)
+    const unsubMessage = appEventService.on('NEW_MESSAGE', (incoming: any) => {
+      if (incoming && incoming.conversationId === conversationId) {
+        const myId = currentUser.userId || currentUser.id;
+        const chatMsg: ChatMessage = {
+          id: incoming.id,
+          conversationId: incoming.conversationId,
+          senderId: incoming.senderId,
+          senderName: incoming.senderName || '',
+          content: incoming.content,
+          type: incoming.type || 'TEXT',
+          isMe: incoming.senderId === myId,
+          time: incoming.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+
+        setMessages(prev => {
+          if (prev.some(m => m.id === chatMsg.id)) return prev;
+          return [...prev, chatMsg];
+        });
+      }
+    });
+
+    // Slow fallback (30s) ONLY if SSE is disconnected
+    const fallbackInterval = setInterval(() => {
+      if (appEventService.isConnected() || (typeof document !== 'undefined' && document.hidden)) return;
+      loadConversationData();
+    }, 30000);
+
+    return () => {
+      unsubMessage();
+      clearInterval(fallbackInterval);
+    };
   }, [conversationId]);
 
   useEffect(() => {

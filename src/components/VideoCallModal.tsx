@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { VideoCallDto, UserProfile } from '../api/types';
 import apiClient from '../api/apiClient';
 import ringtoneService from '../utils/ringtoneService';
+import appEventService from '../utils/appEventService';
 import { Room, RoomEvent, Track, RemoteTrack, LocalVideoTrack } from 'livekit-client';
 import {
   Mic,
@@ -50,7 +51,6 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
   const livekitRoomRef = useRef<Room | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const timerIntervalRef = useRef<any>(null);
-  const sseRef = useRef<EventSource | null>(null);
 
   // Helper to attach remote track to appropriate DOM element
   const attachRemoteTrack = (track: Track) => {
@@ -121,87 +121,44 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
     };
   }, [call.status, isCaller]);
 
-  // Step 2: Real-time listener for Call Status changes (ACCEPTED, REJECTED, ENDED)
+  // Step 2: Real-time listener for Call Status changes (ACCEPTED, REJECTED, ENDED, MISSED)
   useEffect(() => {
     let isCancelled = false;
 
-    // Connect SSE for zero-polling instant state transitions
-    const sseUrl = `${apiClient.baseUrl}/video-call/events?token=${apiClient.authToken || ''}`;
-    try {
-      const sse = new EventSource(sseUrl);
-      sseRef.current = sse;
+    const unsubAccepted = appEventService.on('CALL_ACCEPTED', (updated: VideoCallDto) => {
+      if (isCancelled) return;
+      ringtoneService.stopAll();
+      setCall(prev => ({ ...prev, ...updated, status: 'ACCEPTED' }));
+      showToast(`Video connected with ${peerName}!`, 'success');
+    });
 
-      sse.addEventListener('CALL_ACCEPTED', (e: MessageEvent) => {
-        if (isCancelled) return;
-        try {
-          const updated: VideoCallDto = JSON.parse(e.data);
-          ringtoneService.stopAll();
-          setCall(prev => ({ ...prev, ...updated, status: 'ACCEPTED' }));
-          showToast(`Video connected with ${peerName}!`, 'success');
-        } catch {
-          // ignore
-        }
-      });
+    const unsubRejected = appEventService.on('CALL_REJECTED', () => {
+      if (isCancelled) return;
+      ringtoneService.stopAll();
+      showToast(`${peerName} declined the call`, 'info');
+      cleanupAndClose();
+    });
 
-      sse.addEventListener('CALL_REJECTED', () => {
-        if (isCancelled) return;
-        ringtoneService.stopAll();
-        showToast(`${peerName} declined the call`, 'info');
-        cleanupAndClose();
-      });
+    const unsubEnded = appEventService.on('CALL_ENDED', () => {
+      if (isCancelled) return;
+      ringtoneService.stopAll();
+      showToast('Call ended', 'info');
+      cleanupAndClose();
+    });
 
-      sse.addEventListener('CALL_ENDED', () => {
-        if (isCancelled) return;
-        ringtoneService.stopAll();
-        showToast('Call ended', 'info');
-        cleanupAndClose();
-      });
-
-      sse.addEventListener('CALL_MISSED', () => {
-        if (isCancelled) return;
-        ringtoneService.stopAll();
-        showToast('No answer. Call ended.', 'info');
-        cleanupAndClose();
-      });
-    } catch {
-      // SSE fallback handled below
-    }
-
-    // Polling fallback every 2.5s while ringing
-    const pollInterval = setInterval(async () => {
-      if (isCancelled || call.status === 'ACCEPTED') return;
-      try {
-        const active = await apiClient.getActiveVideoCall();
-        if (!active) {
-          if (call.status === 'RINGING') {
-            ringtoneService.stopAll();
-            showToast('Call ended', 'info');
-            cleanupAndClose();
-          }
-          return;
-        }
-
-        if (active.status === 'ACCEPTED') {
-          ringtoneService.stopAll();
-          setCall(active);
-          showToast(`Video connected with ${peerName}!`, 'success');
-        } else if (active.status === 'REJECTED' || active.status === 'ENDED') {
-          ringtoneService.stopAll();
-          showToast(active.status === 'REJECTED' ? `${peerName} declined the call` : 'Call ended', 'info');
-          cleanupAndClose();
-        }
-      } catch {
-        // ignore
-      }
-    }, 2500);
+    const unsubMissed = appEventService.on('CALL_MISSED', () => {
+      if (isCancelled) return;
+      ringtoneService.stopAll();
+      showToast('No answer. Call ended.', 'info');
+      cleanupAndClose();
+    });
 
     return () => {
       isCancelled = true;
-      clearInterval(pollInterval);
-      if (sseRef.current) {
-        sseRef.current.close();
-        sseRef.current = null;
-      }
+      unsubAccepted();
+      unsubRejected();
+      unsubEnded();
+      unsubMissed();
     };
   }, [call.status, call.callId, peerName]);
 
@@ -488,10 +445,6 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
         clearInterval(timerIntervalRef.current);
         timerIntervalRef.current = null;
       }
-      if (sseRef.current) {
-        sseRef.current.close();
-        sseRef.current = null;
-      }
     };
   }, []);
 
@@ -588,11 +541,6 @@ export const VideoCallModal: React.FC<VideoCallModalProps> = ({
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
-    }
-
-    if (sseRef.current) {
-      sseRef.current.close();
-      sseRef.current = null;
     }
 
     onClose();
