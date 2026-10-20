@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import apiClient from '../api/apiClient';
 import { UserProfile } from '../api/types';
-import { Heart, ImagePlus, Loader2, ArrowRight } from 'lucide-react';
+import { Heart, ImagePlus, Loader2, ArrowRight, MapPin, Navigation } from 'lucide-react';
+import { detectLocation } from '../utils/locationService';
 
 interface AuthScreenProps {
   onAuthSuccess: (profile: UserProfile) => void;
@@ -25,10 +26,28 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
   const [gender, setGender] = useState('MALE');
   const [interestedIn, setInterestedIn] = useState('EVERYONE');
   const [city, setCity] = useState('Mumbai, India');
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [locationSuccessMsg, setLocationSuccessMsg] = useState<string | null>(null);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
 
   const photoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDetectLocation = async () => {
+    setIsDetectingLocation(true);
+    setErrorMessage(null);
+    try {
+      const loc = await detectLocation();
+      setCity(loc.city);
+      setCoords({ latitude: loc.latitude, longitude: loc.longitude });
+      setLocationSuccessMsg(`📍 GPS detected: ${loc.city}`);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Could not detect your current location. Please allow browser location access or type your city.');
+    } finally {
+      setIsDetectingLocation(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -101,6 +120,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
         interestedIn,
         birthDate: '2000-01-01',
         city: city.trim() || 'Mumbai, India',
+        latitude: coords ? coords.latitude : undefined,
+        longitude: coords ? coords.longitude : undefined,
         initialPhotoUrl,
         interestIds: [1, 2, 3],
       });
@@ -410,16 +431,79 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           </div>
 
           <div>
-            <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-              CITY / LOCATION
-            </label>
-            <input
-              type="text"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              placeholder="e.g. Mumbai, India"
-              style={{ width: '100%', padding: '12px 14px', fontSize: '14px' }}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                CITY / LOCATION
+              </label>
+              <button
+                type="button"
+                onClick={handleDetectLocation}
+                disabled={isDetectingLocation}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  background: 'rgba(255, 51, 102, 0.12)',
+                  border: '1px solid rgba(255, 51, 102, 0.3)',
+                  borderRadius: '14px',
+                  padding: '3px 9px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  color: 'var(--primary-pink)',
+                  cursor: isDetectingLocation ? 'wait' : 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                {isDetectingLocation ? (
+                  <>
+                    <Loader2 size={11} className="animate-spin" />
+                    <span>Detecting GPS...</span>
+                  </>
+                ) : (
+                  <>
+                    <Navigation size={11} />
+                    <span>Use Current Location</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                placeholder="e.g. Mumbai, India"
+                style={{
+                  width: '100%',
+                  padding: '12px 14px 12px 34px',
+                  fontSize: '14px',
+                }}
+              />
+              <MapPin
+                size={16}
+                color="var(--primary-pink)"
+                style={{
+                  position: 'absolute',
+                  left: '11px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  pointerEvents: 'none',
+                }}
+              />
+            </div>
+            {locationSuccessMsg && (
+              <div style={{
+                marginTop: '6px',
+                fontSize: '11px',
+                color: 'var(--neon-green, #10B981)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}>
+                <span>✓</span>
+                <span>{locationSuccessMsg}</span>
+              </div>
+            )}
           </div>
 
           <button

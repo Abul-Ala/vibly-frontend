@@ -8,17 +8,20 @@ import { MatchCelebrationModal } from '../components/MatchCelebrationModal';
 import { FilterModal, DiscoveryFilters } from '../components/FilterModal';
 import { ReportBlockModal } from '../components/ReportBlockModal';
 import { VoiceMatchModal } from '../components/VoiceMatchModal';
-import { SlidersHorizontal, RefreshCw, Check, Loader2, Sparkles, MapPin, Briefcase, BadgeCheck, ShieldAlert, X, Mic } from 'lucide-react';
+import { SlidersHorizontal, RefreshCw, Check, Loader2, Sparkles, MapPin, Briefcase, BadgeCheck, ShieldAlert, X, Mic, Navigation } from 'lucide-react';
+import { detectLocation } from '../utils/locationService';
 
 interface DiscoverScreenProps {
   currentUser: UserProfile;
   onNavigateToChat: (conversationId: number) => void;
+  onCurrentUserUpdated?: (updated: UserProfile) => void;
   showToast: (text: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
   currentUser,
   onNavigateToChat,
+  onCurrentUserUpdated,
   showToast,
 }) => {
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
@@ -67,6 +70,25 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
       setProfiles([]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const [isUpdatingLocation, setIsUpdatingLocation] = useState(false);
+
+  const handleUpdateLocation = async () => {
+    setIsUpdatingLocation(true);
+    try {
+      const loc = await detectLocation();
+      const updated = await apiClient.updateLocation(loc.latitude, loc.longitude, loc.city);
+      if (onCurrentUserUpdated) {
+        onCurrentUserUpdated(updated);
+      }
+      showToast(`📍 Location updated to ${loc.city}! Distances refreshed ✨`, 'success');
+      await loadCandidates();
+    } catch (err: any) {
+      showToast(err.message || 'Could not update GPS location. Check browser location permissions.', 'error');
+    } finally {
+      setIsUpdatingLocation(false);
     }
   };
 
@@ -159,85 +181,124 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
     }}>
       {/* Top Header: Responsive for Phone vs Desktop */}
       {isMobile ? (
-        /* Mobile Phone Header */
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '10px 16px',
-          zIndex: 10,
-          borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-          flexShrink: 0,
-        }}>
-          <h1 style={{
-            fontSize: '24px',
-            fontWeight: 900,
-            letterSpacing: '2px',
-            fontFamily: 'var(--font-family-display)',
-          }} className="gradient-text-flame">
-            VIBLY
-          </h1>
+        <>
+          {/* Mobile Phone Header */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 16px',
+            zIndex: 10,
+            borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+            flexShrink: 0,
+          }}>
+            <h1 style={{
+              fontSize: '24px',
+              fontWeight: 900,
+              letterSpacing: '2px',
+              fontFamily: 'var(--font-family-display)',
+            }} className="gradient-text-flame">
+              VIBLY
+            </h1>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
-              onClick={() => setShowVoiceMatch(true)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '6px 12px',
-                borderRadius: '20px',
-                background: 'linear-gradient(135deg, #FF3366, #9B51E0)',
-                color: '#fff',
-                fontSize: '12px',
-                fontWeight: 700,
-                border: 'none',
-                boxShadow: '0 2px 10px rgba(255, 51, 102, 0.4)',
-                cursor: 'pointer',
-              }}
-            >
-              <Mic size={13} color="#fff" />
-              <span>Voice Match</span>
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                onClick={() => setShowVoiceMatch(true)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '6px 12px',
+                  borderRadius: '20px',
+                  background: 'linear-gradient(135deg, #FF3366, #9B51E0)',
+                  color: '#fff',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  border: 'none',
+                  boxShadow: '0 2px 10px rgba(255, 51, 102, 0.4)',
+                  cursor: 'pointer',
+                }}
+              >
+                <Mic size={13} color="#fff" />
+                <span>Voice Match</span>
+              </button>
 
+              <button
+                onClick={() => loadCandidates()}
+                disabled={isLoading}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  padding: '6px 12px',
+                  borderRadius: '20px',
+                  backgroundColor: 'var(--surface-card)',
+                  color: 'var(--text-primary)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                }}
+              >
+                <RefreshCw size={13} color="var(--neon-cyan)" className={isLoading ? 'animate-spin' : ''} />
+                <span>Refresh</span>
+              </button>
+
+              <button
+                onClick={() => setShowFilters(true)}
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '50%',
+                  backgroundColor: 'var(--surface-card)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <SlidersHorizontal size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile Quick Location Bar */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '6px 16px',
+            backgroundColor: 'rgba(255, 255, 255, 0.02)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+            fontSize: '11px',
+            flexShrink: 0,
+          }}>
+            <span style={{ color: 'var(--text-secondary)' }}>
+              {profiles.length} profiles nearby
+            </span>
             <button
-              onClick={() => loadCandidates()}
-              disabled={isLoading}
+              onClick={handleUpdateLocation}
+              disabled={isUpdatingLocation}
               style={{
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
-                gap: '5px',
-                padding: '6px 12px',
-                borderRadius: '20px',
-                backgroundColor: 'var(--surface-card)',
-                color: 'var(--text-primary)',
-                fontSize: '12px',
+                gap: '4px',
+                background: 'rgba(255, 51, 102, 0.1)',
+                border: '1px solid rgba(255, 51, 102, 0.25)',
+                borderRadius: '10px',
+                color: 'var(--primary-pink)',
                 fontWeight: 600,
-                border: '1px solid rgba(255, 255, 255, 0.08)',
+                cursor: isUpdatingLocation ? 'wait' : 'pointer',
+                padding: '2px 8px',
               }}
             >
-              <RefreshCw size={13} color="var(--neon-cyan)" className={isLoading ? 'animate-spin' : ''} />
-              <span>Refresh</span>
-            </button>
-
-            <button
-              onClick={() => setShowFilters(true)}
-              style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: '50%',
-                backgroundColor: 'var(--surface-card)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--text-primary)',
-              }}
-            >
-              <SlidersHorizontal size={16} />
+              {isUpdatingLocation ? <Loader2 size={11} className="animate-spin" /> : <MapPin size={11} />}
+              <span style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {currentUser.city || 'Update GPS'}
+              </span>
             </button>
           </div>
-        </div>
+        </>
       ) : (
         /* Desktop Window Header */
         <div style={{
@@ -271,6 +332,39 @@ export const DiscoverScreen: React.FC<DiscoverScreenProps> = ({
             }}>
               <span>{profiles.length} profiles nearby</span>
             </div>
+
+            <button
+              onClick={handleUpdateLocation}
+              disabled={isUpdatingLocation}
+              title="Click to detect current GPS & refresh nearby feed"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '4px 11px',
+                borderRadius: '12px',
+                backgroundColor: 'rgba(255, 51, 102, 0.12)',
+                border: '1px solid rgba(255, 51, 102, 0.28)',
+                fontSize: '11px',
+                fontWeight: 600,
+                color: 'var(--primary-pink)',
+                cursor: isUpdatingLocation ? 'wait' : 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {isUpdatingLocation ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  <span>Locating GPS...</span>
+                </>
+              ) : (
+                <>
+                  <MapPin size={12} />
+                  <span>{currentUser.city || 'Set Location'}</span>
+                  <span style={{ opacity: 0.6, fontSize: '10px' }}>(Update)</span>
+                </>
+              )}
+            </button>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
