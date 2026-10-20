@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UserProfile } from './api/types';
+import { UserProfile, VideoCallDto } from './api/types';
 import apiClient from './api/apiClient';
 import { AuthScreen } from './screens/AuthScreen';
 import { DiscoverScreen } from './screens/DiscoverScreen';
@@ -9,6 +9,8 @@ import { ProfileScreen } from './screens/ProfileScreen';
 import { EditProfileScreen } from './screens/EditProfileScreen';
 import { Sidebar } from './components/Sidebar';
 import { ToastContainer, ToastMessage } from './components/Toast';
+import { IncomingCallModal } from './components/IncomingCallModal';
+import { VideoCallModal } from './components/VideoCallModal';
 import { Flame, MessageCircle, User, Loader2 } from 'lucide-react';
 
 type Tab = 'discover' | 'matches' | 'profile';
@@ -44,6 +46,10 @@ export const App: React.FC = () => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [likesReceivedCount, setLikesReceivedCount] = useState(0);
   const lastLikesCountRef = useRef<number>(-1);
+
+  // Video Calling State
+  const [incomingCall, setIncomingCall] = useState<VideoCallDto | null>(null);
+  const [activeVideoCall, setActiveVideoCall] = useState<VideoCallDto | null>(null);
 
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'info', icon?: string) => {
     const id = Date.now().toString() + Math.random().toString();
@@ -105,6 +111,109 @@ export const App: React.FC = () => {
     }, 45000);
     return () => clearInterval(interval);
   }, [currentUser]);
+
+  // Real-time Incoming Video Call Listener (SSE + Polling fallback)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    let isCancelled = false;
+    let sse: EventSource | null = null;
+
+    try {
+      const sseUrl = `${apiClient.baseUrl}/video-call/events?token=${apiClient.authToken || ''}`;
+      sse = new EventSource(sseUrl);
+
+      sse.addEventListener('INCOMING_CALL', (e: MessageEvent) => {
+        if (isCancelled) return;
+        try {
+          const call: VideoCallDto = JSON.parse(e.data);
+          if (call && call.status === 'RINGING') {
+            setIncomingCall(call);
+          }
+        } catch {
+          // ignore
+        }
+      });
+
+      sse.addEventListener('ACTIVE_CALL', (e: MessageEvent) => {
+        if (isCancelled) return;
+        try {
+          const call: VideoCallDto = JSON.parse(e.data);
+          const myId = currentUser.userId || currentUser.id;
+          if (call && call.status === 'RINGING' && call.targetId === myId) {
+            setIncomingCall(call);
+          }
+        } catch {
+          // ignore
+        }
+      });
+
+      sse.addEventListener('CALL_ENDED', () => {
+        if (isCancelled) return;
+        setIncomingCall(null);
+      });
+
+      sse.addEventListener('CALL_REJECTED', () => {
+        if (isCancelled) return;
+        setIncomingCall(null);
+      });
+    } catch {
+      // SSE not supported
+    }
+
+    const pollIncoming = async () => {
+      if (isCancelled) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      try {
+        const call = await apiClient.getActiveVideoCall();
+        const myId = currentUser.userId || currentUser.id;
+        if (call && call.status === 'RINGING' && call.targetId === myId) {
+          setIncomingCall(prev => prev?.callId === call.callId ? prev : call);
+        } else if (!call || call.status === 'ENDED' || call.status === 'REJECTED') {
+          setIncomingCall(null);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    pollIncoming();
+    const interval = setInterval(pollIncoming, 3000);
+
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+      if (sse) sse.close();
+    };
+  }, [currentUser]);
+
+  const handleAcceptIncomingCall = async (call: VideoCallDto) => {
+    setIncomingCall(null);
+    try {
+      const accepted = await apiClient.acceptVideoCall(call.callId);
+      setActiveVideoCall(accepted);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to accept video call', 'error');
+    }
+  };
+
+  const handleDeclineIncomingCall = async (call: VideoCallDto) => {
+    setIncomingCall(null);
+    try {
+      await apiClient.rejectVideoCall(call.callId);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleStartVideoCall = async (targetUserId: number, conversationId: number) => {
+    try {
+      const call = await apiClient.initiateVideoCall(targetUserId, conversationId);
+      setActiveVideoCall(call);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to start video call', 'error');
+    }
+  };
 
   const handleNavigateToChat = (conversationId: number) => {
     setActiveConversationId(conversationId);
@@ -348,6 +457,7 @@ export const App: React.FC = () => {
                   setActiveTab('matches');
                   setActiveConversationId(null);
                 }}
+                onStartVideoCall={handleStartVideoCall}
                 showToast={showToast}
               />
             )}
@@ -448,6 +558,25 @@ export const App: React.FC = () => {
             </nav>
           )}
         </div>
+      )}
+
+      {/* Incoming Video Call Ringing Modal */}
+      {incomingCall && (
+        <IncomingCallModal
+          call={incomingCall}
+          onAccept={handleAcceptIncomingCall}
+          onDecline={handleDeclineIncomingCall}
+        />
+      )}
+
+      {/* Active Video Call Modal (LiveKit 2-way call & Outgoing Ringing) */}
+      {activeVideoCall && currentUser && (
+        <VideoCallModal
+          initialCall={activeVideoCall}
+          currentUser={currentUser}
+          onClose={() => setActiveVideoCall(null)}
+          showToast={showToast}
+        />
       )}
     </div>
   );

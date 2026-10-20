@@ -182,3 +182,19 @@ export interface VoiceSignalDto {
   roomId: string;
   payload: string;
 }
+
+export interface VideoCallDto {
+  callId: string;
+  roomId: string;
+  callerId: number;
+  callerProfile?: UserProfile;
+  targetId: number;
+  targetProfile?: UserProfile;
+  conversationId?: number;
+  status: 'RINGING' | 'ACCEPTED' | 'REJECTED' | 'ENDED' | 'BUSY' | 'MISSED';
+  livekitUrl?: string;
+  token?: string;
+  isTargetOnline?: boolean;
+  createdAt: number;
+}
+

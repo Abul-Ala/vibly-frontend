@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChatMessage, UserProfile } from '../api/types';
+import { ChatMessage, UserProfile, VideoCallDto } from '../api/types';
 import apiClient from '../api/apiClient';
 import { ReportBlockModal } from '../components/ReportBlockModal';
+import { VideoCallModal } from '../components/VideoCallModal';
 import {
   ArrowLeft,
   Send,
@@ -14,12 +15,14 @@ import {
   Briefcase,
   Sparkles,
   X,
+  Video,
 } from 'lucide-react';
 
 interface ChatScreenProps {
   conversationId: number;
   currentUser: UserProfile;
   onNavigateBack: () => void;
+  onStartVideoCall?: (targetUserId: number, conversationId: number) => void;
   showToast: (text: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -27,12 +30,15 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
   conversationId,
   currentUser,
   onNavigateBack,
+  onStartVideoCall,
   showToast,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [otherUser, setOtherUser] = useState<UserProfile | null>(null);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [isStartingCall, setIsStartingCall] = useState(false);
+  const [activeCall, setActiveCall] = useState<VideoCallDto | null>(null);
   const [isBlocked, setIsBlocked] = useState(false);
   const [showSafetyModal, setShowSafetyModal] = useState(false);
   const [showProfileDrawer, setShowProfileDrawer] = useState(false);
@@ -229,6 +235,57 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
 
           {/* Right Header Buttons */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {otherUser && (
+              <button
+                onClick={async () => {
+                  const targetId = otherUser.userId || otherUser.id;
+                  if (!targetId) return;
+
+                  if (onStartVideoCall) {
+                    onStartVideoCall(targetId, conversationId);
+                    return;
+                  }
+
+                  setIsStartingCall(true);
+                  try {
+                    const call = await apiClient.initiateVideoCall(targetId, conversationId);
+                    setActiveCall(call);
+                  } catch (err: any) {
+                    showToast(err.message || 'Failed to start video call', 'error');
+                  } finally {
+                    setIsStartingCall(false);
+                  }
+                }}
+                disabled={isStartingCall}
+                title="Start Video Call with LiveKit"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '7px 14px',
+                  borderRadius: '20px',
+                  background: 'linear-gradient(135deg, #FF3366 0%, #FF7A00 100%)',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: isStartingCall ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 14px rgba(255, 51, 102, 0.4)',
+                  opacity: isStartingCall ? 0.7 : 1,
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 18px rgba(255, 51, 102, 0.55)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 14px rgba(255, 51, 102, 0.4)'; }}
+              >
+                {isStartingCall ? (
+                  <Loader2 size={14} className="spin-animation" />
+                ) : (
+                  <Video size={14} />
+                )}
+                <span>{isMobile ? '' : 'Video Call'}</span>
+              </button>
+            )}
+
             {otherUser && (
               <button
                 onClick={() => setShowProfileDrawer(prev => !prev)}
@@ -557,6 +614,16 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({
               showToast('Report submitted to moderation', 'info');
             }
           }}
+        />
+      )}
+
+      {/* Video Call Modal (fallback if not handled by root App) */}
+      {activeCall && !onStartVideoCall && currentUser && (
+        <VideoCallModal
+          initialCall={activeCall}
+          currentUser={currentUser}
+          onClose={() => setActiveCall(null)}
+          showToast={showToast}
         />
       )}
     </div>

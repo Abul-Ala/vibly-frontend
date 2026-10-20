@@ -16,12 +16,15 @@ import {
   UserProfile,
   UserStoryGroup,
   VoiceMatchStatusDto,
-  VoiceSignalDto
+  VoiceSignalDto,
+  VideoCallDto
 } from './types';
+
+const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
 export const DEFAULT_BASE_URL =
   (import.meta as unknown as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL ||
-  'https://dating-social-app-production.up.railway.app/api/v1';
+  (isLocalhost ? 'http://localhost:8080/api/v1' : 'https://dating-social-app-production.up.railway.app/api/v1');
 
 class ApiClient {
   private _baseUrl: string;
@@ -30,7 +33,11 @@ class ApiClient {
 
   constructor() {
     const savedUrl = localStorage.getItem('vibly_base_url') || localStorage.getItem('aura_base_url');
-    this._baseUrl = savedUrl && savedUrl.trim() ? savedUrl.trim() : DEFAULT_BASE_URL;
+    if (isLocalhost && (!savedUrl || savedUrl.includes('railway.app'))) {
+      this._baseUrl = 'http://localhost:8080/api/v1';
+    } else {
+      this._baseUrl = savedUrl && savedUrl.trim() ? savedUrl.trim() : DEFAULT_BASE_URL;
+    }
     this._authToken = localStorage.getItem('vibly_auth_token') || localStorage.getItem('aura_auth_token');
     const savedUserId = localStorage.getItem('vibly_user_id') || localStorage.getItem('aura_user_id');
     this._currentUserId = savedUserId ? parseInt(savedUserId, 10) : null;
@@ -327,6 +334,41 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(signal),
     });
+  }
+
+  // --- Video Call APIs ---
+  async initiateVideoCall(targetUserId: number, conversationId?: number): Promise<VideoCallDto> {
+    return this.request<VideoCallDto>('/video-call/initiate', {
+      method: 'POST',
+      body: JSON.stringify({ targetUserId, conversationId }),
+    });
+  }
+
+  async acceptVideoCall(callId: string): Promise<VideoCallDto> {
+    return this.request<VideoCallDto>(`/video-call/${callId}/accept`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectVideoCall(callId: string, reason = 'DECLINED'): Promise<void> {
+    await this.request<void>(`/video-call/${callId}/reject?reason=${encodeURIComponent(reason)}`, {
+      method: 'POST',
+    });
+  }
+
+  async endVideoCall(callId: string): Promise<void> {
+    await this.request<void>(`/video-call/${callId}/end`, {
+      method: 'POST',
+    });
+  }
+
+  async getActiveVideoCall(): Promise<VideoCallDto | null> {
+    try {
+      const res = await this.request<VideoCallDto>('/video-call/active');
+      return res && res.callId ? res : null;
+    } catch {
+      return null;
+    }
   }
 }
 
